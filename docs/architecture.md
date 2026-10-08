@@ -38,7 +38,7 @@ src/rutern/
   writes.py       list edits: full-list POST, stale-plan check, read-back verification
   look.py         the shared tool look (palette, frame, table) for CLI output
   cli.py          `rutern` command line
-  mcp_server.py   MCP server on stdio (read tools; alias, fixed IP and route writes behind --allow-writes)
+  mcp_server.py   MCP server on stdio: read tools, and policy-allowed writes the person approves via elicitation
 scripts/record_fixtures.py   re-record scrubbed fixtures from the live router
 tests/
   fixtures/       recorded /ws and /v1 JSON, scrubbed; tests run offline

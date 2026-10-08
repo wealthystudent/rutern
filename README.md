@@ -64,7 +64,7 @@ MCP server (stdio), for example in Claude Code:
 claude mcp add rutern -- uv --directory /path/to/rutern run rutern mcp
 ```
 
-Add `--allow-writes` after `mcp` (or `--allow-writes alias,lease`) to expose the write tools the policy's `mcp_writes` allows: `set_device_alias`, `set_fixed_ip`, `set_static_route`. Port forwards are CLI only.
+Add `--allow-writes` after `mcp` (or `--allow-writes alias,lease`) to expose the write tools the policy's `mcp_writes` allows: `set_device_alias`, `set_fixed_ip`, `set_static_route`. Port forwards are CLI only. With `confirm=true` a write tool asks you to approve the change in your MCP client; clients without that (elicitation) get no writes.
 
 ## Develop
 
