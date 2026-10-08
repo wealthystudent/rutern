@@ -1,0 +1,78 @@
+"""LocalClient: the unauthenticated sysbus at http://<router>/ws.
+
+Only the calls the router's own landing page uses work without auth. The
+host list, NMC.get, Firewall and DHCPv4.Server answer error 13 and must go
+through the cloud.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import httpx
+
+from rutern.config import Config
+from rutern.errors import ApiError, PermissionDenied, Unreachable
+from rutern.models import DeviceInfo, Vap, WanStatus, parse_vaps
+
+CONTENT_TYPE = "application/x-sah-ws-4-call+json"
+PERMISSION_DENIED = 13
+
+
+class LocalClient:
+    def __init__(self, config: Config | None = None, transport: httpx.BaseTransport | None = None):
+        self.config = config or Config()
+        self._http = httpx.Client(
+            base_url=self.config.local_url, timeout=self.config.timeout, transport=transport
+        )
+
+    def close(self) -> None:
+        self._http.close()
+
+    def landing_page(self) -> str:
+        try:
+            r = self._http.get("/")
+        except httpx.HTTPError as e:
+            raise Unreachable(f"router at {self.config.local_host} did not answer") from e
+        return r.text
+
+    def call(self, service: str, method: str, parameters: dict[str, Any] | None = None) -> Any:
+        """Run one sysbus call and return the whole success envelope."""
+        body = {"service": service, "method": method, "parameters": parameters or {}}
+        try:
+            r = self._http.post("/ws", json=body, headers={"Content-Type": CONTENT_TYPE})
+        except httpx.HTTPError as e:
+            raise Unreachable(f"router at {self.config.local_host} did not answer") from e
+        if r.status_code == 401:
+            raise PermissionDenied(f"{service}.{method} needs auth the local API does not offer")
+        if r.status_code != 200:
+            raise ApiError(f"{service}.{method}: HTTP {r.status_code}")
+        try:
+            env = r.json()
+        except ValueError as e:
+            raise ApiError(f"{service}.{method}: response is not JSON") from e
+        if not isinstance(env, dict):
+            raise ApiError(f"{service}.{method}: unexpected envelope")
+        errors = env.get("errors") or []
+        if errors:
+            codes = [e.get("error") for e in errors if isinstance(e, dict)]
+            if PERMISSION_DENIED in codes:
+                raise PermissionDenied(f"{service}.{method}: permission denied (error 13)")
+            raise ApiError(f"{service}.{method}: router error {codes}")
+        return env
+
+    # reads
+
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo.model_validate(self.call("DeviceInfo", "get").get("status"))
+
+    def wan_status(self) -> WanStatus:
+        return WanStatus.model_validate(self.call("NMC", "getWANStatus").get("data"))
+
+    def vaps(self) -> list[Vap]:
+        env = self.call("NeMo.Intf.lan", "getMIBs", {"mibs": "wlanvap"})
+        status = env.get("status")
+        wlanvap = status.get("wlanvap") if isinstance(status, dict) else None
+        if not isinstance(wlanvap, dict):
+            raise ApiError("NeMo.Intf.lan getMIBs: no wlanvap in response")
+        return parse_vaps(wlanvap)

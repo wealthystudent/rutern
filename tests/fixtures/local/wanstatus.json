@@ -1,0 +1,9 @@
+{
+  "status": true,
+  "data": {
+    "LinkState": "up",
+    "IPAddress": "203.0.113.1",
+    "IPv6Address": "2001:db8::1",
+    "IPv6DelegatedPrefix": "2001:db8::2/48"
+  }
+}

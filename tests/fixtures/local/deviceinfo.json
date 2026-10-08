@@ -1,0 +1,10 @@
+{
+  "status": {
+    "ProductClass": "TEL-HGW-1",
+    "SerialNumber": "S000000000000",
+    "SoftwareVersion": "1.2.66.0",
+    "AdditionalSoftwareVersion": "",
+    "UpTime": 133907,
+    "BaseMAC": "02:00:00:00:00:01"
+  }
+}

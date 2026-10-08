@@ -1,0 +1,438 @@
+{
+  "status": {
+    "wlanvap": {
+      "vap2g0_0": {
+        "SSID": "ssid-1",
+        "IEEE80211r": {},
+        "IEEE80211u": {},
+        "Security": {},
+        "WPS": {},
+        "MACFiltering": {
+          "Entry": {},
+          "TempEntry": {}
+        },
+        "ProbeFiltering": {
+          "TempEntry": {}
+        },
+        "VendorIEs": {
+          "VendorIE": {}
+        },
+        "HotSpot2": {},
+        "AssociatedDevice": {
+          "02:00:00:00:00:02": {
+            "ProbeReqCaps": {},
+            "AffiliatedSta": {}
+          }
+        },
+        "AssociationCount": {
+          "FastReconnectTypes": {
+            "Default": {},
+            "OnStateChange": {},
+            "OnScan": {},
+            "User": {}
+          }
+        },
+        "MgtStats": {},
+        "ErrorToggleConfig": {},
+        "ErrorToggleStats": {},
+        "Neighbour": {},
+        "RssiEventing": {},
+        "StaKickOnError": {
+          "GenericTests": {},
+          "VendorTests": {}
+        },
+        "DriverConfig": {},
+        "StaHistogram": {},
+        "ApMonitorConfig": {}
+      },
+      "vap2g0_2": {
+        "SSID": "ssid-2",
+        "IEEE80211r": {},
+        "IEEE80211u": {},
+        "Security": {},
+        "WPS": {},
+        "MACFiltering": {
+          "Entry": {},
+          "TempEntry": {}
+        },
+        "ProbeFiltering": {
+          "TempEntry": {}
+        },
+        "VendorIEs": {
+          "VendorIE": {}
+        },
+        "HotSpot2": {},
+        "AssociatedDevice": {
+          "02:00:00:00:00:03": {
+            "ProbeReqCaps": {},
+            "AffiliatedSta": {}
+          },
+          "02:00:00:00:00:04": {
+            "ProbeReqCaps": {},
+            "AffiliatedSta": {}
+          },
+          "02:00:00:00:00:05": {
+            "ProbeReqCaps": {},
+            "AffiliatedSta": {}
+          },
+          "02:00:00:00:00:06": {
+            "ProbeReqCaps": {},
+            "AffiliatedSta": {}
+          },
+          "02:00:00:00:00:07": {
+            "ProbeReqCaps": {},
+            "AffiliatedSta": {}
+          },
+          "02:00:00:00:00:08": {
+            "ProbeReqCaps": {},
+            "AffiliatedSta": {}
+          },
+          "02:00:00:00:00:09": {
+            "ProbeReqCaps": {},
+            "AffiliatedSta": {}
+          },
+          "02:00:00:00:00:0a": {
+            "ProbeReqCaps": {},
+            "AffiliatedSta": {}
+          },
+          "02:00:00:00:00:0b": {
+            "ProbeReqCaps": {},
+            "AffiliatedSta": {}
+          },
+          "02:00:00:00:00:0c": {
+            "ProbeReqCaps": {},
+            "AffiliatedSta": {}
+          }
+        },
+        "AssociationCount": {
+          "FastReconnectTypes": {
+            "Default": {},
+            "OnStateChange": {},
+            "OnScan": {},
+            "User": {}
+          }
+        },
+        "MgtStats": {},
+        "ErrorToggleConfig": {},
+        "ErrorToggleStats": {},
+        "Neighbour": {},
+        "RssiEventing": {},
+        "StaKickOnError": {
+          "GenericTests": {},
+          "VendorTests": {}
+        },
+        "DriverConfig": {},
+        "StaHistogram": {},
+        "ApMonitorConfig": {}
+      },
+      "vap2g0_3": {
+        "SSID": "ssid-3",
+        "IEEE80211r": {},
+        "IEEE80211u": {},
+        "Security": {},
+        "WPS": {},
+        "MACFiltering": {
+          "Entry": {},
+          "TempEntry": {}
+        },
+        "ProbeFiltering": {
+          "TempEntry": {}
+        },
+        "VendorIEs": {
+          "VendorIE": {}
+        },
+        "HotSpot2": {},
+        "AssociatedDevice": {},
+        "AssociationCount": {
+          "FastReconnectTypes": {
+            "Default": {},
+            "OnStateChange": {},
+            "OnScan": {},
+            "User": {}
+          }
+        },
+        "MgtStats": {},
+        "ErrorToggleConfig": {},
+        "ErrorToggleStats": {},
+        "Neighbour": {},
+        "RssiEventing": {},
+        "StaKickOnError": {
+          "GenericTests": {},
+          "VendorTests": {}
+        },
+        "DriverConfig": {},
+        "StaHistogram": {},
+        "ApMonitorConfig": {}
+      },
+      "vap5g0_0": {
+        "SSID": "ssid-1",
+        "IEEE80211r": {},
+        "IEEE80211u": {},
+        "Security": {},
+        "WPS": {},
+        "MACFiltering": {
+          "Entry": {},
+          "TempEntry": {}
+        },
+        "ProbeFiltering": {
+          "TempEntry": {}
+        },
+        "VendorIEs": {
+          "VendorIE": {}
+        },
+        "HotSpot2": {},
+        "AssociatedDevice": {
+          "02:00:00:00:00:0d": {
+            "ProbeReqCaps": {},
+            "AffiliatedSta": {}
+          },
+          "02:00:00:00:00:0e": {
+            "ProbeReqCaps": {},
+            "AffiliatedSta": {}
+          }
+        },
+        "AssociationCount": {
+          "FastReconnectTypes": {
+            "Default": {},
+            "OnStateChange": {},
+            "OnScan": {},
+            "User": {}
+          }
+        },
+        "MgtStats": {},
+        "ErrorToggleConfig": {},
+        "ErrorToggleStats": {},
+        "Neighbour": {},
+        "RssiEventing": {},
+        "StaKickOnError": {
+          "GenericTests": {},
+          "VendorTests": {}
+        },
+        "DriverConfig": {},
+        "StaHistogram": {},
+        "ApMonitorConfig": {}
+      },
+      "vap5g0_2": {
+        "SSID": "ssid-2",
+        "IEEE80211r": {},
+        "IEEE80211u": {},
+        "Security": {},
+        "WPS": {},
+        "MACFiltering": {
+          "Entry": {},
+          "TempEntry": {}
+        },
+        "ProbeFiltering": {
+          "TempEntry": {}
+        },
+        "VendorIEs": {
+          "VendorIE": {}
+        },
+        "HotSpot2": {},
+        "AssociatedDevice": {
+          "02:00:00:00:00:0c": {
+            "ProbeReqCaps": {},
+            "AffiliatedSta": {}
+          },
+          "02:00:00:00:00:0f": {
+            "ProbeReqCaps": {},
+            "AffiliatedSta": {}
+          },
+          "02:00:00:00:00:10": {
+            "ProbeReqCaps": {},
+            "AffiliatedSta": {}
+          }
+        },
+        "AssociationCount": {
+          "FastReconnectTypes": {
+            "Default": {},
+            "OnStateChange": {},
+            "OnScan": {},
+            "User": {}
+          }
+        },
+        "MgtStats": {},
+        "ErrorToggleConfig": {},
+        "ErrorToggleStats": {},
+        "Neighbour": {},
+        "RssiEventing": {},
+        "StaKickOnError": {
+          "GenericTests": {},
+          "VendorTests": {}
+        },
+        "DriverConfig": {},
+        "StaHistogram": {},
+        "ApMonitorConfig": {}
+      },
+      "vap5g0_3": {
+        "SSID": "ssid-3",
+        "IEEE80211r": {},
+        "IEEE80211u": {},
+        "Security": {},
+        "WPS": {},
+        "MACFiltering": {
+          "Entry": {},
+          "TempEntry": {}
+        },
+        "ProbeFiltering": {
+          "TempEntry": {}
+        },
+        "VendorIEs": {
+          "VendorIE": {}
+        },
+        "HotSpot2": {},
+        "AssociatedDevice": {},
+        "AssociationCount": {
+          "FastReconnectTypes": {
+            "Default": {},
+            "OnStateChange": {},
+            "OnScan": {},
+            "User": {}
+          }
+        },
+        "MgtStats": {},
+        "ErrorToggleConfig": {},
+        "ErrorToggleStats": {},
+        "Neighbour": {},
+        "RssiEventing": {},
+        "StaKickOnError": {
+          "GenericTests": {},
+          "VendorTests": {}
+        },
+        "DriverConfig": {},
+        "StaHistogram": {},
+        "ApMonitorConfig": {}
+      },
+      "vap6g0_0": {
+        "SSID": "ssid-1",
+        "IEEE80211r": {},
+        "IEEE80211u": {},
+        "Security": {},
+        "WPS": {},
+        "MACFiltering": {
+          "Entry": {},
+          "TempEntry": {}
+        },
+        "ProbeFiltering": {
+          "TempEntry": {}
+        },
+        "VendorIEs": {
+          "VendorIE": {}
+        },
+        "HotSpot2": {},
+        "AssociatedDevice": {
+          "02:00:00:00:00:11": {
+            "ProbeReqCaps": {},
+            "AffiliatedSta": {}
+          },
+          "02:00:00:00:00:0e": {
+            "ProbeReqCaps": {},
+            "AffiliatedSta": {}
+          },
+          "02:00:00:00:00:02": {
+            "ProbeReqCaps": {},
+            "AffiliatedSta": {}
+          }
+        },
+        "AssociationCount": {
+          "FastReconnectTypes": {
+            "Default": {},
+            "OnStateChange": {},
+            "OnScan": {},
+            "User": {}
+          }
+        },
+        "MgtStats": {},
+        "ErrorToggleConfig": {},
+        "ErrorToggleStats": {},
+        "Neighbour": {},
+        "RssiEventing": {},
+        "StaKickOnError": {
+          "GenericTests": {},
+          "VendorTests": {}
+        },
+        "DriverConfig": {},
+        "StaHistogram": {},
+        "ApMonitorConfig": {}
+      },
+      "vap6g0_2": {
+        "SSID": "ssid-2",
+        "IEEE80211r": {},
+        "IEEE80211u": {},
+        "Security": {},
+        "WPS": {},
+        "MACFiltering": {
+          "Entry": {},
+          "TempEntry": {}
+        },
+        "ProbeFiltering": {
+          "TempEntry": {}
+        },
+        "VendorIEs": {
+          "VendorIE": {}
+        },
+        "HotSpot2": {},
+        "AssociatedDevice": {},
+        "AssociationCount": {
+          "FastReconnectTypes": {
+            "Default": {},
+            "OnStateChange": {},
+            "OnScan": {},
+            "User": {}
+          }
+        },
+        "MgtStats": {},
+        "ErrorToggleConfig": {},
+        "ErrorToggleStats": {},
+        "Neighbour": {},
+        "RssiEventing": {},
+        "StaKickOnError": {
+          "GenericTests": {},
+          "VendorTests": {}
+        },
+        "DriverConfig": {},
+        "StaHistogram": {},
+        "ApMonitorConfig": {}
+      },
+      "vap6g0_3": {
+        "SSID": "ssid-3",
+        "IEEE80211r": {},
+        "IEEE80211u": {},
+        "Security": {},
+        "WPS": {},
+        "MACFiltering": {
+          "Entry": {},
+          "TempEntry": {}
+        },
+        "ProbeFiltering": {
+          "TempEntry": {}
+        },
+        "VendorIEs": {
+          "VendorIE": {}
+        },
+        "HotSpot2": {},
+        "AssociatedDevice": {},
+        "AssociationCount": {
+          "FastReconnectTypes": {
+            "Default": {},
+            "OnStateChange": {},
+            "OnScan": {},
+            "User": {}
+          }
+        },
+        "MgtStats": {},
+        "ErrorToggleConfig": {},
+        "ErrorToggleStats": {},
+        "Neighbour": {},
+        "RssiEventing": {},
+        "StaKickOnError": {
+          "GenericTests": {},
+          "VendorTests": {}
+        },
+        "DriverConfig": {},
+        "StaHistogram": {},
+        "ApMonitorConfig": {}
+      }
+    }
+  }
+}

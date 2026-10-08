@@ -1,0 +1,87 @@
+{
+  "errors": [],
+  "non_volatile": [
+    {
+      "hostname": "device-4",
+      "mac": "02:00:00:00:00:0c"
+    },
+    {
+      "hostname": "device-7",
+      "mac": "02:00:00:00:00:08"
+    },
+    {
+      "hostname": "device-8",
+      "mac": "02:00:00:00:00:09"
+    },
+    {
+      "hostname": "device-26",
+      "mac": "02:00:00:00:00:1c"
+    },
+    {
+      "hostname": "device-21",
+      "mac": "02:00:00:00:00:14"
+    },
+    {
+      "hostname": "device-19",
+      "mac": "02:00:00:00:00:10"
+    },
+    {
+      "hostname": "device-13",
+      "mac": "02:00:00:00:00:0f"
+    },
+    {
+      "hostname": "device-11",
+      "mac": "02:00:00:00:00:04"
+    },
+    {
+      "hostname": "device-6",
+      "mac": "02:00:00:00:00:1d"
+    },
+    {
+      "hostname": "device-17",
+      "mac": "02:00:00:00:00:03"
+    }
+  ],
+  "volatile": [
+    {
+      "active": true,
+      "hostname": "device-11",
+      "mac": "02:00:00:00:00:04"
+    },
+    {
+      "active": true,
+      "hostname": "device-13",
+      "mac": "02:00:00:00:00:0f"
+    },
+    {
+      "active": true,
+      "hostname": "device-4",
+      "mac": "02:00:00:00:00:0c"
+    },
+    {
+      "active": true,
+      "hostname": "device-19",
+      "mac": "02:00:00:00:00:10"
+    },
+    {
+      "active": true,
+      "hostname": "device-17",
+      "mac": "02:00:00:00:00:03"
+    },
+    {
+      "active": true,
+      "hostname": "device-21",
+      "mac": "02:00:00:00:00:14"
+    },
+    {
+      "active": true,
+      "hostname": "device-8",
+      "mac": "02:00:00:00:00:09"
+    },
+    {
+      "active": true,
+      "hostname": "device-7",
+      "mac": "02:00:00:00:00:08"
+    }
+  ]
+}
