@@ -13,8 +13,14 @@ import httpx
 from rutern.cloud import COOKIE, CloudClient, LoginGuard
 from rutern.config import Config
 from rutern.local import LocalClient
+from rutern.policy import Policy
 from rutern.router import Router
+from rutern.writes import KINDS, Kind
 from tests.conftest import load
+
+# A policy that allows every write, for tests about the write flow itself.
+WRITABLE = Policy(cli_writes=frozenset(KINDS), mcp_writes=frozenset(KINDS) - {"forward"})
+MCP_WRITES = WRITABLE.mcp_writes
 
 LOCAL_CALLS = {
     ("DeviceInfo", "get"): "local/deviceinfo.json",
@@ -122,7 +128,11 @@ class MemoryStore:
 
 
 def make_router(
-    tmp_path: Path, *, cloud: FakeCloud | None = None, local_up: bool = True
+    tmp_path: Path,
+    *,
+    cloud: FakeCloud | None = None,
+    local_up: bool = True,
+    writes: frozenset[Kind] = frozenset(KINDS),
 ) -> tuple[Router, FakeCloud]:
     cfg = Config(reference="12345678")
     fake = cloud or FakeCloud()
@@ -135,5 +145,6 @@ def make_router(
         password=lambda: "never-used",
         store=MemoryStore(),  # type: ignore[arg-type]
         guard=LoginGuard(tmp_path / "guard"),
+        writable=bool(writes),
     )
-    return Router(cfg, local=local, cloud=cc), fake
+    return Router(cfg, local=local, cloud=cc, writes=writes), fake

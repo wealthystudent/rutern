@@ -33,5 +33,9 @@ class ApiError(RuternError):
     """The router answered with an unexpected status or shape."""
 
 
-class WriteRefused(RuternError):
+class NotAllowed(RuternError):
+    """Policy or a guardrail refused the action."""
+
+
+class WriteRefused(NotAllowed):
     """A write was not allowed (writes disabled, unconfirmed or unknown target)."""

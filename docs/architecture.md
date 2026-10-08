@@ -28,8 +28,9 @@ Why hybrid and not one backend: local is instant and private but firmware-limite
 src/rutern/
   config.py       LAN host, fixed portal URL, reference validation, private state files
   net.py          HTTP send with a response size cap
+  policy.py       owner policy file: write kinds per channel, read-only by default
   keychain.py     Keychain read of the admin password; session cookie cache
-  errors.py       Unreachable, PermissionDenied, AuthRequired, LoginFailed, LoginBlocked, ApiError, WriteRefused
+  errors.py       ConfigError, Unreachable, PermissionDenied, AuthRequired, LoginFailed, LoginBlocked, ApiError, NotAllowed, WriteRefused
   models.py       Pydantic models; router strings cleaned, secrets redacted
   local.py        LocalClient: /ws transport + unauthenticated reads
   cloud.py        CloudClient: login guard, session, typed /v1 reads

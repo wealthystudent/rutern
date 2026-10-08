@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from rutern.mcp_server import build
-from tests.fakes import FakeCloud, make_router
+from tests.fakes import MCP_WRITES, FakeCloud, make_router
 
 KNOWN = "02:00:00:00:00:11"
 
@@ -33,7 +33,7 @@ def test_read_only_by_default(tmp_path: Path) -> None:
 
 def test_destructive_tools_never_exist(tmp_path: Path) -> None:
     r, _ = make_router(tmp_path)
-    names = tools(build(allow_writes=True, router=lambda: r))
+    names = tools(build(writes=MCP_WRITES, router=lambda: r))
     for bad in ("reboot", "factory", "reset", "reprovision"):
         assert not any(bad in n for n in names)
 
@@ -71,7 +71,7 @@ def test_injection_hostname_is_data(tmp_path: Path) -> None:
 
 def test_alias_write_needs_confirm(tmp_path: Path) -> None:
     r, cloud = make_router(tmp_path)
-    s = build(allow_writes=True, router=lambda: r)
+    s = build(writes=MCP_WRITES, router=lambda: r)
     plan = call(s, "set_device_alias", {"mac": KNOWN, "alias": "Den"})
     assert plan["data"]["written"] is False
     assert plan["data"]["change"]["after"]["hostname"] == "Den"
@@ -83,7 +83,7 @@ def test_alias_write_needs_confirm(tmp_path: Path) -> None:
 
 def test_errors_are_reported_not_raised(tmp_path: Path) -> None:
     r, _ = make_router(tmp_path)
-    s = build(allow_writes=True, router=lambda: r)
+    s = build(writes=MCP_WRITES, router=lambda: r)
     out = call(s, "set_device_alias", {"mac": "nope", "alias": "x", "confirm": True})
     assert out["error"] == "WriteRefused"
 

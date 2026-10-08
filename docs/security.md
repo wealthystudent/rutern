@@ -14,7 +14,7 @@ This tool holds router admin credentials and is partly driven by an AI agent, so
 ## Redaction
 
 - The `/wlan` response returns `encryption_key` (the WiFi password) in cleartext. Model fields holding secrets are redacted by default in every repr, serialization and log.
-- CLI hides secrets unless the user passes an explicit `--show-secrets`. The MCP server never returns secrets to the agent.
+- CLI hides secrets unless a person at an interactive terminal passes `--show-secrets` and the policy keeps `reveal_secrets` on. The MCP server never returns secrets to the agent.
 
 ## Untrusted input
 
@@ -26,12 +26,13 @@ This tool holds router admin credentials and is partly driven by an AI agent, so
 
 ## Least privilege and writes
 
-- Read-only by default. Writes require an explicit opt-in flag.
+- The owner policy (`~/.config/rutern/policy.toml`, `rutern policy`) is the ceiling: which write kinds the CLI and MCP may make. With no file rutern is read-only everywhere. Flags and env can only narrow it (`RUTERN_READ_ONLY=1` turns every write off), and the file must not be writable by others. A bad file is an error for every command, never a guess.
+- A disallowed CLI write is refused before any network call; `--dry-run` still works. The `Router` only applies kinds it was given, and a cloud client built without writes refuses anything but GET.
 - Only allowlisted cloud endpoints (`READS`, `WRITES` in `cloud.py`) and local sysbus calls (`CALLS` in `local.py`) can be sent, matched by exact name, so no path trick or bug reaches an endpoint rutern does not use.
 - Responses are read up to 2 MiB; the local API is plain HTTP, so anyone intercepting the LAN could otherwise answer with an endless body.
 - Destructive endpoints are excluded from the code entirely, not merely hidden: `factory-reset`, `reboot`, `msan/reset-ont`, `msan/reset-port`, `msan/reset-config`, `msan/dsl-reprovision`.
 - Every write has a dry-run, shows a before/after diff, and reads the value back afterwards to confirm it applied.
-- CLI writes ask y/N on a terminal and refuse when not interactive unless `--yes`. MCP write tools exist only with `rutern mcp --allow-writes` and return a plan until called with `confirm=true`.
+- CLI writes ask y/N on a terminal and refuse when not interactive unless `--yes`. Adding or changing a port forward ignores `--yes`: it needs a person at an interactive terminal typing the WAN port. Removing one reduces exposure and takes `--yes`. MCP write tools exist only with `rutern mcp --allow-writes` and return a plan until called with `confirm=true`.
 - Port forwards are CLI only and print a warning; no MCP tool can open a port, since a device hostname could carry an "open port 22" injection.
 - A write sends the whole list. Untouched entries go back exactly as read, and a list holding a field rutern does not know is refused, since nothing proves the portal keeps that field on the round trip. `apply` refuses if the entry changed since the plan or its id appears more than once, and fails loudly if the read-back (whole entries, any order) shows the change missing or any other entry altered, removed or added.
 - Static routes may only point at private space (10/8, 172.16/12, 192.168/16, 100.64/10) and never overlap the LAN, so no route can pull internet traffic or one resolver through a LAN device.
@@ -50,3 +51,12 @@ This tool holds router admin credentials and is partly driven by an AI agent, so
 ## Unofficial API
 
 The cloud API is undocumented and can change without notice. Responses are validated against models; a shape mismatch fails loudly. A small, explicitly-run smoke check re-verifies the login flow and key reads so breakage is caught deliberately.
+
+## Trust boundary
+
+The guardrails bind the interfaces rutern offers: MCP tools and CLI commands. They do not bind a process that runs as you with a shell. Such a process (an agent with a Bash tool included) can call `security` and the portal directly, and nothing in rutern can stop that. What they do:
+
+- An agent driving rutern over MCP, or through the CLI without a terminal, cannot reveal WiFi keys, open ports, or write anything the policy does not list.
+- The Keychain item created with `-T ""` makes macOS ask before any program reads the admin password, so a silent read becomes a visible prompt. The session cookie is not protected that way; it lasts until the portal expires it or `rutern logout`.
+- "A person at a terminal" means stdin is a TTY and `CLAUDECODE` is unset. That separates people from agents run the usual way; a process that fakes a TTY is past this boundary anyway.
+- MCP runs on stdio only. Never add a network transport without authentication.

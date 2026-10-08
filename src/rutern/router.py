@@ -26,7 +26,7 @@ from rutern.models import (
     WanStatus,
     Wifi,
 )
-from rutern.writes import Change
+from rutern.writes import Change, Kind
 
 
 class Status(Model):
@@ -44,8 +44,10 @@ class Router:
         *,
         local: LocalClient | None = None,
         cloud: CloudClient | None = None,
+        writes: frozenset[Kind] = frozenset(),
     ):
         self.config = config or Config()
+        self.writes = writes
         self._local = local
         self._cloud = cloud
 
@@ -58,7 +60,7 @@ class Router:
     @property
     def cloud(self) -> CloudClient:
         if self._cloud is None:
-            self._cloud = CloudClient(self.config)
+            self._cloud = CloudClient(self.config, writable=bool(self.writes))
         return self._cloud
 
     def close(self) -> None:
@@ -225,6 +227,8 @@ class Router:
         )
 
     def apply(self, change: Change) -> Change:
+        if change.kind not in self.writes:
+            raise WriteRefused(f"{change.kind} writes are not enabled for this session")
         if not change.noop:
             writes.apply(self.cloud, change)
         return change

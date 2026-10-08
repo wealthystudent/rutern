@@ -163,8 +163,10 @@ class CloudClient:
         guard: LoginGuard | None = None,
         pin: ReferencePin | None = None,
         clock: Callable[[], float] = time.monotonic,
+        writable: bool = False,
     ):
         self.config = config or Config()
+        self.writable = writable
         self._password = password
         self._store = store if store is not None else SessionStore()
         self._guard = guard or LoginGuard()
@@ -343,6 +345,8 @@ class CloudClient:
         if not allowed:
             refused = ApiError if method == "GET" else WriteRefused
             raise refused(f"{method} {endpoint!r} is not an endpoint rutern uses")
+        if method != "GET" and not self.writable:
+            raise WriteRefused("this rutern session is read-only")
         fresh = self._ensure_session()
         r = self._send(method, endpoint, body)
         if self._is_auth_failure(r):

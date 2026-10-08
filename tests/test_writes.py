@@ -9,7 +9,7 @@ import pytest
 from rutern.cli import main
 from rutern.errors import ApiError, WriteRefused
 from rutern.mcp_server import build
-from tests.fakes import FakeCloud, make_router
+from tests.fakes import MCP_WRITES, WRITABLE, FakeCloud, make_router
 from tests.test_mcp import call
 
 KNOWN = "02:00:00:00:00:11"  # online, no fixed IP in the fixture
@@ -183,7 +183,7 @@ def run(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], *argv: str
 ) -> tuple[int, str, str, FakeCloud]:
     r, cloud = make_router(tmp_path)
-    code = main(list(argv), router=lambda: r)
+    code = main(list(argv), router=lambda: r, pol=WRITABLE)
     out, err = capsys.readouterr()
     return code, out, err, cloud
 
@@ -204,9 +204,20 @@ def test_cli_forward_warns_and_needs_confirmation(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     code, out, err, cloud = run(
-        tmp_path, capsys, "forwards", "add", "ssh", "tcp", "2222", "10.0.0.5", "--lan-port", "22"
+        tmp_path,
+        capsys,
+        "forwards",
+        "add",
+        "ssh",
+        "tcp",
+        "2222",
+        "10.0.0.5",
+        "--lan-port",
+        "22",
+        "--yes",
     )
-    assert code == 1 and "internet" in out and "not confirmed" in err and cloud.posts == []
+    assert code == 1 and "internet" in out and "22 (ssh)" in out
+    assert "interactive terminal" in err and cloud.posts == []
 
 
 def test_cli_list_still_works_without_action(
@@ -221,7 +232,7 @@ def test_cli_list_still_works_without_action(
 
 def test_mcp_write_tools(tmp_path: Path) -> None:
     r, cloud = make_router(tmp_path)
-    s = build(allow_writes=True, router=lambda: r)
+    s = build(writes=MCP_WRITES, router=lambda: r)
     names = {t.name for t in asyncio.run(s.list_tools())}
     assert {"set_device_alias", "set_fixed_ip", "set_static_route"} <= names
     assert not any("forward" in n or "nat" in n for n in names)
@@ -335,6 +346,6 @@ def test_plan_renders_saved_values_cleanly(
         {"mac": KNOWN, "hostname": "evil\x1b]0;pwned\x07\nname"}
     )
     r, _ = make_router(tmp_path, cloud=cloud)
-    code = main(["host", "alias", "set", KNOWN, "Den", "--dry-run"], router=lambda: r)
+    code = main(["host", "alias", "set", KNOWN, "Den", "--dry-run"], router=lambda: r, pol=WRITABLE)
     out = capsys.readouterr().out
     assert code == 0 and "evil" in out and "\x1b]0" not in out and "\x07" not in out

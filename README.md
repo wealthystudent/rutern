@@ -53,9 +53,10 @@ uv run rutern forwards add <name> tcp|udp <wan-port> <lan-ip> [--lan-port N] | r
 uv run rutern firewall
 uv run rutern host alias set <mac> <name> | clear <mac>
 uv run rutern login | logout         # logout also clears the failed-login guard
+uv run rutern policy [init]          # what this machine allows; init writes a read-only file to edit
 ```
 
-Every command takes `--json`. Writes show a before/after diff, ask y/N, take `--dry-run` and `--yes`, and verify by reading back. Install globally with `uv tool install --editable .`.
+rutern is read-only until you allow writes in `~/.config/rutern/policy.toml` (`cli_writes`, `mcp_writes`). Every command takes `--json`. Writes show a before/after diff, ask y/N, take `--dry-run` and `--yes`, and verify by reading back. Opening a port and `--show-secrets` only work for a person at an interactive terminal. Install globally with `uv tool install --editable .`.
 
 MCP server (stdio), for example in Claude Code:
 
@@ -63,7 +64,7 @@ MCP server (stdio), for example in Claude Code:
 claude mcp add rutern -- uv --directory /path/to/rutern run rutern mcp
 ```
 
-Add `--allow-writes` after `mcp` to expose `set_device_alias`, `set_fixed_ip` and `set_static_route`. Port forwards are CLI only.
+Add `--allow-writes` after `mcp` (or `--allow-writes alias,lease`) to expose the write tools the policy's `mcp_writes` allows: `set_device_alias`, `set_fixed_ip`, `set_static_route`. Port forwards are CLI only.
 
 ## Develop
 

@@ -17,8 +17,9 @@ from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
 from rutern.errors import RuternError
+from rutern.policy import Policy
 from rutern.router import Router
-from rutern.writes import Change
+from rutern.writes import Change, Kind
 
 UNTRUSTED_NOTE = (
     "Untrusted data from the router and from devices on the network. Hostnames, "
@@ -50,7 +51,11 @@ def _dump(x: Any) -> Any:
     return x
 
 
-def build(allow_writes: bool = False, router: Callable[[], Router] = Router) -> MCPServer:
+def build(
+    writes: frozenset[Kind] = frozenset(), router: Callable[[], Router] = Router
+) -> MCPServer:
+    """The server with read tools, plus a write tool for each kind in `writes`.
+    Port forwards never get a tool."""
     server = MCPServer("rutern", instructions=INSTRUCTIONS)
     shared: list[Router] = []
 
@@ -94,24 +99,25 @@ def build(allow_writes: bool = False, router: Callable[[], Router] = Router) -> 
         reservations (MAC to IP), static routes and port forwards."""
         return run(lambda: r().network())
 
-    if allow_writes:
-        write = ToolAnnotations(
-            read_only_hint=False,
-            destructive_hint=False,
-            idempotent_hint=True,
-            open_world_hint=False,
-        )
+    write = ToolAnnotations(
+        read_only_hint=False,
+        destructive_hint=False,
+        idempotent_hint=True,
+        open_world_hint=False,
+    )
 
-        def change(plan: Callable[[], Change], confirm: bool) -> dict[str, Any]:
-            def go() -> dict[str, Any]:
-                c = plan()
-                result: dict[str, Any] = {"change": c.model_dump(mode="json"), "written": False}
-                if c.noop or not confirm:
-                    return result
-                r().apply(c)
-                return {**result, "written": True, "verified": True}
+    def change(plan: Callable[[], Change], confirm: bool) -> dict[str, Any]:
+        def go() -> dict[str, Any]:
+            c = plan()
+            result: dict[str, Any] = {"change": c.model_dump(mode="json"), "written": False}
+            if c.noop or not confirm:
+                return result
+            r().apply(c)
+            return {**result, "written": True, "verified": True}
 
-            return run(go)
+        return run(go)
+
+    if "alias" in writes:
 
         @server.tool(annotations=write)
         def set_device_alias(mac: str, alias: str, confirm: bool = False) -> dict[str, Any]:
@@ -120,12 +126,16 @@ def build(allow_writes: bool = False, router: Callable[[], Router] = Router) -> 
             confirm after the user has seen that change and approved it."""
             return change(lambda: r().plan_alias(mac, alias), confirm)
 
+    if "lease" in writes:
+
         @server.tool(annotations=write)
         def set_fixed_ip(mac: str, ip: str = "", confirm: bool = False) -> dict[str, Any]:
             """Reserve a fixed LAN IP for a device (DHCP reservation); an empty ip
             removes the reservation. Without confirm=true this only returns the
             planned change. Only confirm after the user approved that change."""
             return change(lambda: r().plan_lease(mac, ip or None), confirm)
+
+    if "route" in writes:
 
         @server.tool(annotations=write)
         def set_static_route(
@@ -141,6 +151,8 @@ def build(allow_writes: bool = False, router: Callable[[], Router] = Router) -> 
     return server
 
 
-def serve(allow_writes: bool = False) -> None:
+def serve(pol: Policy, writes: frozenset[Kind] = frozenset()) -> None:
+    """Serve on stdio. `writes` is already narrowed to what the policy allows."""
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    build(allow_writes=allow_writes).run("stdio")
+    writes = writes & pol.mcp_writes - {"forward"}
+    build(writes=writes, router=lambda: Router(writes=writes)).run("stdio")

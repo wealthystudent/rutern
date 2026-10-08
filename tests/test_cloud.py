@@ -182,6 +182,7 @@ def test_post_sends_json_and_origin(tmp_path: Path) -> None:
         password=lambda: PASSWORD,
         store=MemoryStore("good-session"),  # type: ignore[arg-type]
         guard=LoginGuard(tmp_path / "guard"),
+        writable=True,
     )
     c.post("lan-hosts/alias", {"mac": "aa"})
     req = seen[-1]
@@ -351,6 +352,7 @@ def test_validation_error_mentioning_10000_is_not_an_auth_failure(tmp_path: Path
         password=lambda: PASSWORD,
         store=MemoryStore("good-session"),  # type: ignore[arg-type]
         guard=LoginGuard(tmp_path / "guard"),
+        writable=True,
     )
     with pytest.raises(ApiError, match="HTTP 400"):
         c.post("nat-rules", {"rules": []})
@@ -428,3 +430,11 @@ def test_oversized_response_is_refused(tmp_path: Path) -> None:
     )
     with pytest.raises(ApiError, match="larger"):
         c.get("uptime")
+
+
+def test_client_is_read_only_unless_made_writable(tmp_path: Path) -> None:
+    portal = FakePortal()
+    c = client(portal, MemoryStore("good-session"), tmp_path)
+    with pytest.raises(WriteRefused, match="read-only"):
+        c.post("lan-hosts/alias", {"hosts": []})
+    assert portal.seen == []

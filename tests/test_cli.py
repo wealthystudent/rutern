@@ -11,7 +11,14 @@ from rutern.cloud import COOKIE, CloudClient, LoginGuard, ReferencePin
 from rutern.config import Config
 from rutern.local import LocalClient
 from rutern.router import Router
-from tests.fakes import FakeCloud, MemoryStore, local_handler, make_router, unreachable
+from tests.fakes import (
+    WRITABLE,
+    FakeCloud,
+    MemoryStore,
+    local_handler,
+    make_router,
+    unreachable,
+)
 
 KNOWN = "02:00:00:00:00:11"
 
@@ -20,7 +27,7 @@ def run(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], *argv: str, cloud: FakeCloud | None = None
 ) -> tuple[int, str, str, FakeCloud]:
     r, fake = make_router(tmp_path, cloud=cloud)
-    code = main(list(argv), router=lambda: r)
+    code = main(list(argv), router=lambda: r, pol=WRITABLE)
     out, err = capsys.readouterr()
     return code, out, err, fake
 
@@ -53,7 +60,10 @@ def test_wifi_hides_keys_by_default(tmp_path: Path, capsys: pytest.CaptureFixtur
         assert code == 0 and "s3cret" not in out + err
 
 
-def test_wifi_show_secrets(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_wifi_show_secrets(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("rutern.cli.human_terminal", lambda: True)
     cloud = FakeCloud()
     cloud.data["wlan"]["non_volatile"][0]["encryption_key"] = "s3cret-wifi-pass"
     _, out, _, _ = run(tmp_path, capsys, "wifi", "--show-secrets", cloud=cloud)
