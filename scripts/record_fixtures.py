@@ -165,10 +165,6 @@ def record_local(sc: Scrubber) -> None:
     try:
         for name, (svc, method, params) in calls.items():
             write(f"local/{name}", sc.walk(c.call(svc, method, params)))
-        try:
-            c.call("Devices", "get", {})
-        except Exception as e:
-            print(f"Devices.get locally: {type(e).__name__}")
     finally:
         c.close()
 

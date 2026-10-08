@@ -5,6 +5,10 @@ class RuternError(Exception):
     """Base for every error rutern raises on purpose."""
 
 
+class ConfigError(RuternError):
+    """Settings (env, policy file, saved state) are invalid or missing."""
+
+
 class Unreachable(RuternError):
     """The router or the cloud portal did not answer."""
 

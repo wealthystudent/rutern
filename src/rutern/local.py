@@ -11,12 +11,15 @@ from typing import Any
 
 import httpx
 
+from rutern import net
 from rutern.config import Config
 from rutern.errors import ApiError, PermissionDenied, Unreachable
 from rutern.models import DeviceInfo, Vap, WanStatus, parse_vaps
 
 CONTENT_TYPE = "application/x-sah-ws-4-call+json"
 PERMISSION_DENIED = 13
+# The only calls rutern makes; anything else is refused before it is sent.
+CALLS = frozenset({("DeviceInfo", "get"), ("NMC", "getWANStatus"), ("NeMo.Intf.lan", "getMIBs")})
 
 
 class LocalClient:
@@ -29,18 +32,16 @@ class LocalClient:
     def close(self) -> None:
         self._http.close()
 
-    def landing_page(self) -> str:
-        try:
-            r = self._http.get("/")
-        except httpx.HTTPError as e:
-            raise Unreachable(f"router at {self.config.local_host} did not answer") from e
-        return r.text
-
     def call(self, service: str, method: str, parameters: dict[str, Any] | None = None) -> Any:
         """Run one sysbus call and return the whole success envelope."""
+        if (service, method) not in CALLS:
+            raise ApiError(f"{service}.{method} is not a call rutern makes")
         body = {"service": service, "method": method, "parameters": parameters or {}}
+        req = self._http.build_request(
+            "POST", "/ws", json=body, headers={"Content-Type": CONTENT_TYPE}
+        )
         try:
-            r = self._http.post("/ws", json=body, headers={"Content-Type": CONTENT_TYPE})
+            r = net.send(self._http, req)
         except httpx.HTTPError as e:
             raise Unreachable(f"router at {self.config.local_host} did not answer") from e
         if r.status_code == 401:

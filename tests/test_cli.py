@@ -3,10 +3,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import httpx
 import pytest
 
 from rutern.cli import duration, main
-from tests.fakes import FakeCloud, make_router
+from rutern.cloud import COOKIE, CloudClient, LoginGuard, ReferencePin
+from rutern.config import Config
+from rutern.local import LocalClient
+from rutern.router import Router
+from tests.fakes import FakeCloud, MemoryStore, local_handler, make_router, unreachable
 
 KNOWN = "02:00:00:00:00:11"
 
@@ -85,3 +90,56 @@ def test_duration() -> None:
     assert duration(133723) == "1d 13h"
     assert duration(3700) == "1h 1m"
     assert duration(0) == "-"
+
+
+def _login_router(tmp_path: Path, local_up: bool) -> tuple[Router, list[str]]:
+    seen: list[str] = []
+
+    def portal(req: httpx.Request) -> httpx.Response:
+        seen.append(f"{req.method} {req.url.path}")
+        if req.method == "GET" and req.url.path == "/login/admin":
+            return httpx.Response(200, text='x,model:"ex5700",reference:"12345678",y')
+        if req.method == "POST" and req.url.path == "/login/admin":
+            return httpx.Response(
+                200, json={"type": "redirect"}, headers={"set-cookie": f"{COOKIE}=s; Path=/"}
+            )
+        return httpx.Response(404)
+
+    cfg = Config(reference=None)
+    local = LocalClient(
+        cfg, transport=httpx.MockTransport(local_handler if local_up else unreachable)
+    )
+    cloud = CloudClient(
+        cfg,
+        transport=httpx.MockTransport(portal),
+        password=lambda: "pw",
+        store=MemoryStore(None),  # type: ignore[arg-type]
+        guard=LoginGuard(tmp_path / "guard"),
+        pin=ReferencePin(tmp_path / "reference"),
+    )
+    return Router(cfg, local=local, cloud=cloud), seen
+
+
+def test_login_away_from_home_never_asks_the_portal(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    r, seen = _login_router(tmp_path, local_up=False)
+    assert main(["login"], router=lambda: r) == 1
+    assert "at home" in capsys.readouterr().err and seen == []
+
+
+def test_login_at_home_discovers_and_pins(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    r, seen = _login_router(tmp_path, local_up=True)
+    assert main(["login"], router=lambda: r) == 0
+    assert seen == ["GET /login/admin", "POST /login/admin"]
+    assert (tmp_path / "reference").read_text().strip() == "12345678"
+
+
+def test_bad_env_is_a_clean_error(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("RUTERN_HOST", "evil.example")
+    assert main(["status"]) == 1
+    assert "RUTERN_HOST" in capsys.readouterr().err

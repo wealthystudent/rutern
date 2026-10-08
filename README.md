@@ -33,8 +33,11 @@ Local covers fast, offline, read-only status. The cloud path covers the full hos
 Needs macOS, [uv](https://docs.astral.sh/uv/), and the admin password in Keychain (service `telenor-router`, account `telenor`):
 
 ```
-security add-generic-password -s telenor-router -a telenor -w   # prompts for the password
+security add-generic-password -s telenor-router -a telenor -T "" -w   # prompts for the password
+uv run rutern login                  # once, at home: finds and saves your router's reference
 ```
+
+`-T ""` makes macOS ask before any program reads the password; rutern only reads it to log in. Answer Allow, not Always Allow.
 
 ```
 uv run rutern status                 # device, WAN, WiFi; local, no login

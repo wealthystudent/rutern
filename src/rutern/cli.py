@@ -11,7 +11,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from rutern import __version__, look, writes
-from rutern.errors import RuternError, WriteRefused
+from rutern.errors import ConfigError, RuternError, WriteRefused
 from rutern.models import (
     Firewall,
     Host,
@@ -398,8 +398,19 @@ def cmd_forward_write(r: Router, a: argparse.Namespace) -> str:
 
 
 def cmd_login(r: Router, a: argparse.Namespace) -> str:
+    if not r.cloud.has_reference:
+        # The portal names the router by public IP, which only means this
+        # router when you are on its LAN. Away from home it names someone else's.
+        try:
+            r.local.device_info()
+        except RuternError as e:
+            raise ConfigError(
+                "the router does not answer on this LAN, so its reference cannot be "
+                "found safely; run `rutern login` at home or set RUTERN_REFERENCE"
+            ) from e
+        r.cloud.find_reference()
     r.cloud.login()
-    return look.fg(look.OK, "logged in; session cached in Keychain")
+    return look.fg(look.OK, "logged in; session cached in Keychain, router reference saved")
 
 
 def cmd_logout(r: Router, a: argparse.Namespace) -> str:
@@ -518,8 +529,9 @@ def main(argv: Sequence[str] | None = None, router: Callable[[], Router] = Route
     a = parser().parse_args(argv)
     if getattr(a, "no_color", False) or getattr(a, "json", False):
         look.set_color(False)
-    r = router()
+    r: Router | None = None
     try:
+        r = router()
         out = a.fn(r, a)
     except RuternError as e:
         print(look.error(str(e)), file=sys.stderr)
@@ -527,7 +539,8 @@ def main(argv: Sequence[str] | None = None, router: Callable[[], Router] = Route
     except KeyboardInterrupt:
         return 130
     finally:
-        r.close()
+        if r is not None:
+            r.close()
     if out:
         print(out)
     return 0

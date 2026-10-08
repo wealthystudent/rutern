@@ -26,7 +26,8 @@ Why hybrid and not one backend: local is instant and private but firmware-limite
 
 ```
 src/rutern/
-  config.py       host, base URLs, reference (env or discovered), state dir
+  config.py       LAN host, fixed portal URL, reference validation, private state files
+  net.py          HTTP send with a response size cap
   keychain.py     Keychain read of the admin password; session cookie cache
   errors.py       Unreachable, PermissionDenied, AuthRequired, LoginFailed, LoginBlocked, ApiError, WriteRefused
   models.py       Pydantic models; router strings cleaned, secrets redacted

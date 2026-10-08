@@ -20,9 +20,25 @@ def test_reads() -> None:
     assert len(c.vaps()) == 9
 
 
-def test_gated_service_maps_to_permission_denied() -> None:
+def test_permission_denied_maps_from_error_13() -> None:
+    def h(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"status": None, "errors": [{"error": 13}]})
+
     with pytest.raises(PermissionDenied):
-        client().call("Devices", "get")
+        client(h).device_info()
+
+
+def test_calls_outside_the_allowlist_are_never_sent() -> None:
+    sent: list[httpx.Request] = []
+
+    def h(req: httpx.Request) -> httpx.Response:
+        sent.append(req)
+        return local_handler(req)
+
+    for service, method in (("Devices", "get"), ("NMC", "reboot"), ("NMC", "reset")):
+        with pytest.raises(ApiError, match="not a call rutern makes"):
+            client(h).call(service, method)
+    assert sent == []
 
 
 def test_unreachable() -> None:

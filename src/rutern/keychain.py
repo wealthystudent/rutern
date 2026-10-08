@@ -12,19 +12,25 @@ import subprocess
 
 from rutern.errors import AuthRequired
 
+# By absolute path, so a `security` planted earlier in PATH never sees the session.
+SECURITY = "/usr/bin/security"
 SERVICE = "telenor-router"
 ACCOUNT = "telenor"
 SESSION_SERVICE = "telenor-router-session"
 
 
-def _find(service: str) -> str | None:
+# Long enough to answer the macOS prompt when the item trusts no app (see README).
+PROMPT_TIMEOUT = 120
+
+
+def _find(service: str, timeout: float = 10) -> str | None:
     try:
         out = subprocess.run(
-            ["security", "find-generic-password", "-s", service, "-a", ACCOUNT, "-w"],
+            [SECURITY, "find-generic-password", "-s", service, "-a", ACCOUNT, "-w"],
             capture_output=True,
             text=True,
             check=False,
-            timeout=10,
+            timeout=timeout,
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -36,7 +42,7 @@ def _find(service: str) -> str | None:
 
 def admin_password() -> str:
     """The admin password from Keychain (service telenor-router, account telenor)."""
-    value = _find(SERVICE)
+    value = _find(SERVICE, timeout=PROMPT_TIMEOUT)
     if value is None:
         raise AuthRequired(
             f"no admin password in Keychain (service {SERVICE!r}, account {ACCOUNT!r})"
@@ -58,14 +64,14 @@ def store_session(value: str) -> None:
     cmd = f"add-generic-password -U -s {SESSION_SERVICE} -a {ACCOUNT} -w {_quote(value)}\n"
     with contextlib.suppress(OSError, subprocess.TimeoutExpired):
         subprocess.run(
-            ["security", "-i"], input=cmd, capture_output=True, text=True, check=False, timeout=10
+            [SECURITY, "-i"], input=cmd, capture_output=True, text=True, check=False, timeout=10
         )
 
 
 def clear_session() -> None:
     with contextlib.suppress(OSError, subprocess.TimeoutExpired):
         subprocess.run(
-            ["security", "delete-generic-password", "-s", SESSION_SERVICE, "-a", ACCOUNT],
+            [SECURITY, "delete-generic-password", "-s", SESSION_SERVICE, "-a", ACCOUNT],
             capture_output=True,
             check=False,
             timeout=10,

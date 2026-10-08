@@ -5,10 +5,15 @@ runs at most once per process, and a rejected login writes a guard file
 that blocks further attempts for a while, because repeated failures can
 lock the router. The cookie is cached in Keychain so most runs need no
 login at all; a cached cookie that turns out stale costs one fresh login.
+
+Only the endpoints in READS and WRITES can be reached, by exact name, so
+reboot, factory reset and the msan resets are unreachable through rutern
+even by mistake.
 """
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -16,14 +21,23 @@ from typing import Any
 
 import httpx
 
-from rutern import keychain
-from rutern.config import Config, discover_reference, state_dir
+from rutern import keychain, net
+from rutern.config import (
+    CLOUD_BASE,
+    Config,
+    discover_reference,
+    state_dir,
+    valid_reference,
+    write_private,
+)
 from rutern.errors import (
     ApiError,
     AuthRequired,
+    ConfigError,
     LoginBlocked,
     LoginFailed,
     Unreachable,
+    WriteRefused,
 )
 from rutern.models import (
     AliasEntry,
@@ -48,9 +62,32 @@ AUTH_FAILED_MESSAGE = "10000"
 GUARD_SECONDS = 15 * 60
 LOGIN_INTERVAL = 60.0
 
+READS = frozenset(
+    {
+        "uptime",
+        "lan-hosts",
+        "wlan",
+        "lan-hosts/alias",
+        "static-dhcp-leases",
+        "static-routes",
+        "dhcp",
+        "nat-rules",
+        "dmz",
+        "dns",
+        "firewall-status",
+        "firewall-rules",
+        "upnp",
+        "upnp/mappings",
+    }
+)
+WRITES = frozenset({"lan-hosts/alias", "static-dhcp-leases", "static-routes", "nat-rules"})
+
+GUARD_HINT = "Check the Keychain password, then run `rutern logout` to clear this guard"
+
 
 class LoginGuard:
-    """A file that records a rejected login so later runs do not retry it."""
+    """A file that records a rejected login so later runs do not retry it.
+    A guard file that cannot be read blocks too: when in doubt, do not log in."""
 
     def __init__(self, path: Path | None = None, clock: Callable[[], float] = time.time):
         self.path = path or state_dir() / "login-failed"
@@ -58,23 +95,48 @@ class LoginGuard:
 
     def check(self) -> None:
         try:
-            failed_at = float(self.path.read_text().strip())
-        except (OSError, ValueError):
+            text = self.path.read_text()
+        except FileNotFoundError:
             return
+        except OSError:
+            raise LoginBlocked(f"cannot read the login guard. {GUARD_HINT}") from None
+        try:
+            failed_at = float(text.strip())
+        except ValueError:
+            failed_at = math.nan
+        if not math.isfinite(failed_at):
+            raise LoginBlocked(f"the login guard file is damaged. {GUARD_HINT}")
         left = GUARD_SECONDS - (self.clock() - failed_at)
         if left > 0:
             raise LoginBlocked(
                 f"last login was rejected; not retrying for {int(left // 60) + 1} min "
-                "to avoid locking the router. Check the Keychain password, then run "
-                "`rutern logout` to clear this guard"
+                f"to avoid locking the router. {GUARD_HINT}"
             )
 
     def record_failure(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self.path.write_text(f"{self.clock()}\n")
+        write_private(self.path, f"{self.clock()}\n")
 
     def clear(self) -> None:
         self.path.unlink(missing_ok=True)
+
+
+class ReferencePin:
+    """The router's reference id, saved after the first good login. The portal
+    names a router by the public IP you connect from, so asking it again away
+    from home would name someone else's router."""
+
+    def __init__(self, path: Path | None = None):
+        self.path = path or state_dir() / "reference"
+
+    def load(self) -> str | None:
+        try:
+            value = self.path.read_text().strip()
+        except OSError:
+            return None
+        return value if valid_reference(value) else None
+
+    def save(self, value: str) -> None:
+        write_private(self.path, f"{value}\n")
 
 
 class SessionStore:
@@ -99,17 +161,17 @@ class CloudClient:
         password: Callable[[], str] = keychain.admin_password,
         store: SessionStore | None = None,
         guard: LoginGuard | None = None,
-        reference: Callable[[], str] | None = None,
+        pin: ReferencePin | None = None,
         clock: Callable[[], float] = time.monotonic,
     ):
         self.config = config or Config()
         self._password = password
         self._store = store if store is not None else SessionStore()
         self._guard = guard or LoginGuard()
-        self._reference_fn = reference
+        self._pin = pin or ReferencePin()
         self._reference: str | None = self.config.reference
         self._http = httpx.Client(
-            base_url=self.config.cloud_base,
+            base_url=CLOUD_BASE,
             timeout=self.config.timeout,
             transport=transport,
             follow_redirects=False,
@@ -127,11 +189,28 @@ class CloudClient:
     @property
     def reference(self) -> str:
         if self._reference is None:
-            ref = self._reference_fn() if self._reference_fn else self.discover_reference()
-            if not ref or not ref.isdigit():
-                raise ApiError("no reference id; set RUTERN_REFERENCE")
+            ref = self._pin.load()
+            if ref is None:
+                raise ConfigError(
+                    "no router reference yet; run `rutern login` once at home, "
+                    "or set RUTERN_REFERENCE"
+                )
             self._reference = ref
         return self._reference
+
+    @property
+    def has_reference(self) -> bool:
+        return self._reference is not None or self._pin.load() is not None
+
+    def find_reference(self) -> str:
+        """Ask the portal which router this connection is behind. It answers by
+        public IP, so this is only right at home; `rutern login` checks that."""
+        ref = self.discover_reference()
+        if not valid_reference(ref):
+            raise ApiError("the portal named no router for this connection; set RUTERN_REFERENCE")
+        assert ref is not None
+        self._reference = ref
+        return ref
 
     def discover_reference(self) -> str | None:
         """The portal's admin login page names the router it sees you behind.
@@ -139,8 +218,9 @@ class CloudClient:
         """
         path = "/login/admin"
         for _ in range(3):
+            req = self._http.build_request("GET", path, headers={"Accept": "text/html"})
             try:
-                r = self._http.get(path, headers={"Accept": "text/html"})
+                r = net.send(self._http, req)
             except httpx.HTTPError as e:
                 raise Unreachable("wifi.telenor.no did not answer") from e
             if r.status_code == 200:
@@ -148,16 +228,16 @@ class CloudClient:
             if not r.is_redirect:
                 return None
             path = str(r.headers.get("location", ""))
-            if path.strip("/").isdigit():
+            if valid_reference(path.strip("/")):
                 return path.strip("/")
-            if not path.startswith("/"):
+            if not path.startswith("/") or path.startswith("//"):
                 return None
         return None
 
     # session
 
     def _set_cookie(self, value: str) -> None:
-        host = httpx.URL(self.config.cloud_base).host
+        host = httpx.URL(CLOUD_BASE).host
         self._http.cookies.set(COOKIE, value, domain=host, path="/")
 
     def _has_cookie(self) -> bool:
@@ -178,19 +258,27 @@ class CloudClient:
         if self._last_login is not None and now - self._last_login < LOGIN_INTERVAL:
             raise AuthRequired("logged in moments ago and the session is still refused")
         self._guard.check()
+        reference = self.reference
         self._last_login = now
         self._http.cookies.clear()
         files = {
-            "username": (None, self.reference),
+            "username": (None, reference),
             "password": (None, self._password()),
             "redirect_to": (None, "/"),
         }
-        headers = {"Origin": self.config.cloud_base, "x-sveltekit-action": "true"}
+        headers = {"Origin": CLOUD_BASE, "x-sveltekit-action": "true"}
+        req = self._http.build_request("POST", "/login/admin?/login", files=files, headers=headers)
         try:
-            r = self._http.post("/login/admin?/login", files=files, headers=headers)
-        except httpx.HTTPError as e:
+            r = net.send(self._http, req)
+        except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            # Never reached the portal, so it cannot count as an attempt.
             self._login_failed = True
             raise Unreachable("wifi.telenor.no did not answer the login") from e
+        except (httpx.HTTPError, ApiError) as e:
+            # The password may have arrived; count it like a rejection.
+            self._login_failed = True
+            self._guard.record_failure()
+            raise Unreachable("the login broke off midway; not retrying for a while") from e
         ok = False
         if r.status_code == 200:
             try:
@@ -203,6 +291,7 @@ class CloudClient:
             self._guard.record_failure()
             raise LoginFailed(f"login rejected (HTTP {r.status_code}); not retrying")
         self._guard.clear()
+        self._pin.save(reference)
         self._store.save(cookie)
 
     def logout(self) -> None:
@@ -225,10 +314,11 @@ class CloudClient:
     # requests
 
     def _send(self, method: str, endpoint: str, body: Any = None) -> httpx.Response:
-        path = f"/v1/{self.reference}/{endpoint.lstrip('/')}"
-        headers = {"Origin": self.config.cloud_base} if method != "GET" else None
+        path = f"/v1/{self.reference}/{endpoint}"
+        headers = {"Origin": CLOUD_BASE} if method != "GET" else None
+        req = self._http.build_request(method, path, json=body, headers=headers)
         try:
-            return self._http.request(method, path, json=body, headers=headers)
+            return net.send(self._http, req)
         except httpx.HTTPError as e:
             raise Unreachable(f"wifi.telenor.no did not answer {method} {endpoint}") from e
 
@@ -238,9 +328,21 @@ class CloudClient:
             return True
         if r.is_redirect and "login" in r.headers.get("location", ""):
             return True
-        return r.status_code in (400, 403) and AUTH_FAILED_MESSAGE in r.text[:200]
+        if r.status_code not in (400, 403):
+            return False
+        try:
+            body = r.json()
+        except ValueError:
+            return False
+        return isinstance(body, dict) and str(body.get("message")) == AUTH_FAILED_MESSAGE
 
     def request(self, method: str, endpoint: str, body: Any = None) -> Any:
+        allowed = (method == "GET" and endpoint in READS) or (
+            method == "POST" and endpoint in WRITES
+        )
+        if not allowed:
+            refused = ApiError if method == "GET" else WriteRefused
+            raise refused(f"{method} {endpoint!r} is not an endpoint rutern uses")
         fresh = self._ensure_session()
         r = self._send(method, endpoint, body)
         if self._is_auth_failure(r):

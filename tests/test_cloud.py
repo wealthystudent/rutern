@@ -7,9 +7,17 @@ from pathlib import Path
 import httpx
 import pytest
 
-from rutern.cloud import COOKIE, CloudClient, LoginGuard
+from rutern.cloud import COOKIE, CloudClient, LoginGuard, ReferencePin
 from rutern.config import Config
-from rutern.errors import ApiError, AuthRequired, LoginBlocked, LoginFailed
+from rutern.errors import (
+    ApiError,
+    AuthRequired,
+    ConfigError,
+    LoginBlocked,
+    LoginFailed,
+    Unreachable,
+    WriteRefused,
+)
 
 Handler = Callable[[httpx.Request], httpx.Response]
 PASSWORD = "hunter2-not-real"
@@ -231,6 +239,8 @@ def test_discover_reference_from_login_page_and_redirects(tmp_path: Path) -> Non
         return httpx.Response(404)
 
     c = CloudClient(Config(reference=None), transport=httpx.MockTransport(handler))
+    assert not c.has_reference
+    assert c.find_reference() == "87654321"
     assert c.reference == "87654321"
 
 
@@ -243,6 +253,178 @@ def test_login_refuses_without_reference(tmp_path: Path) -> None:
         store=MemoryStore(),  # type: ignore[arg-type]
         guard=LoginGuard(tmp_path / "guard"),
     )
-    with pytest.raises(ApiError, match="reference"):
+    with pytest.raises(ConfigError, match="reference"):
         c.login()
     assert portal.logins == 0
+
+
+# hardening
+
+
+def test_only_allowlisted_endpoints_reach_the_portal(tmp_path: Path) -> None:
+    portal = FakePortal()
+    c = client(portal, MemoryStore("good-session"), tmp_path)
+    for ep in (
+        "reboot",
+        "factory-reset",
+        "msan/reset-ont",
+        "../../reboot",
+        "uptime/../reboot",
+        "uptime?x=1",
+        "/uptime",
+        "log",
+    ):
+        with pytest.raises(ApiError, match="not an endpoint"):
+            c.get(ep)
+        with pytest.raises(WriteRefused, match="not an endpoint"):
+            c.post(ep, {})
+    with pytest.raises(WriteRefused):
+        c.post("uptime", {})
+    with pytest.raises(WriteRefused):
+        c.request("DELETE", "lan-hosts/alias")
+    assert portal.seen == []
+
+
+def test_cloud_base_cannot_be_redirected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RUTERN_CLOUD", "http://evil.example")
+    hosts: list[str] = []
+    portal = FakePortal()
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        hosts.append(f"{req.url.scheme}://{req.url.host}")
+        return portal(req)
+
+    c = CloudClient(
+        Config(),
+        transport=httpx.MockTransport(handler),
+        password=lambda: PASSWORD,
+        store=MemoryStore(),  # type: ignore[arg-type]
+        guard=LoginGuard(tmp_path / "guard"),
+    )
+    c.get("uptime")
+    assert set(hosts) == {"https://wifi.telenor.no"}
+
+
+def test_login_pins_the_reference(tmp_path: Path) -> None:
+    pin = ReferencePin(tmp_path / "state" / "reference")
+    portal = FakePortal()
+    c = CloudClient(
+        Config(reference="12345678"),
+        transport=httpx.MockTransport(portal),
+        password=lambda: PASSWORD,
+        store=MemoryStore(),  # type: ignore[arg-type]
+        guard=LoginGuard(tmp_path / "guard"),
+        pin=pin,
+    )
+    c.get("uptime")
+    assert pin.load() == "12345678"
+    assert pin.path.stat().st_mode & 0o777 == 0o600
+    later = CloudClient(Config(reference=None), transport=httpx.MockTransport(portal), pin=pin)
+    assert later.has_reference and later.reference == "12345678"
+
+
+def test_no_reference_sends_nothing(tmp_path: Path) -> None:
+    portal = FakePortal()
+    c = CloudClient(
+        Config(reference=None),
+        transport=httpx.MockTransport(portal),
+        password=lambda: PASSWORD,
+        store=MemoryStore("good-session"),  # type: ignore[arg-type]
+        guard=LoginGuard(tmp_path / "guard"),
+    )
+    with pytest.raises(ConfigError, match="rutern login"):
+        c.get("uptime")
+    assert portal.seen == []
+
+
+def test_validation_error_mentioning_10000_is_not_an_auth_failure(tmp_path: Path) -> None:
+    portal = FakePortal()
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.method == "POST" and req.url.path.endswith("/nat-rules"):
+            return httpx.Response(400, json={"message": "Wan_port_start must not exceed 10000"})
+        return portal(req)
+
+    c = CloudClient(
+        Config(reference="12345678"),
+        transport=httpx.MockTransport(handler),
+        password=lambda: PASSWORD,
+        store=MemoryStore("good-session"),  # type: ignore[arg-type]
+        guard=LoginGuard(tmp_path / "guard"),
+    )
+    with pytest.raises(ApiError, match="HTTP 400"):
+        c.post("nat-rules", {"rules": []})
+    assert portal.logins == 0
+
+
+def test_exact_10000_message_is_an_auth_failure(tmp_path: Path) -> None:
+    portal = FakePortal()
+    stale = [True]
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path.endswith("/uptime") and stale[0]:
+            stale[0] = False
+            return httpx.Response(403, json={"message": 10000})
+        return portal(req)
+
+    c = CloudClient(
+        Config(reference="12345678"),
+        transport=httpx.MockTransport(handler),
+        password=lambda: PASSWORD,
+        store=MemoryStore("good-session"),  # type: ignore[arg-type]
+        guard=LoginGuard(tmp_path / "guard"),
+    )
+    assert c.get("uptime")["os"] == 10
+    assert portal.logins == 1
+
+
+@pytest.mark.parametrize("content", ["garbage", "nan", "inf"])
+def test_damaged_guard_blocks_login(tmp_path: Path, content: str) -> None:
+    guard = LoginGuard(tmp_path / "g")
+    guard.path.write_text(content)
+    with pytest.raises(LoginBlocked, match="damaged"):
+        guard.check()
+
+
+def test_guard_file_is_private(tmp_path: Path) -> None:
+    guard = LoginGuard(tmp_path / "state" / "g")
+    guard.record_failure()
+    assert guard.path.stat().st_mode & 0o777 == 0o600
+    assert guard.path.parent.stat().st_mode & 0o777 == 0o700
+
+
+@pytest.mark.parametrize(
+    ("exc", "guarded"), [(httpx.ConnectError, False), (httpx.ReadTimeout, True)]
+)
+def test_login_cut_off_after_sending_counts_as_attempt(
+    tmp_path: Path, exc: type[httpx.TransportError], guarded: bool
+) -> None:
+    def handler(req: httpx.Request) -> httpx.Response:
+        raise exc("boom", request=req)
+
+    guard = LoginGuard(tmp_path / "guard")
+    c = CloudClient(
+        Config(reference="12345678"),
+        transport=httpx.MockTransport(handler),
+        password=lambda: PASSWORD,
+        store=MemoryStore(),  # type: ignore[arg-type]
+        guard=guard,
+    )
+    with pytest.raises(Unreachable):
+        c.login()
+    assert guard.path.exists() is guarded
+
+
+def test_oversized_response_is_refused(tmp_path: Path) -> None:
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"[" + b"0," * (2 * 1024 * 1024) + b"0]")
+
+    c = CloudClient(
+        Config(reference="12345678"),
+        transport=httpx.MockTransport(handler),
+        password=lambda: PASSWORD,
+        store=MemoryStore("good-session"),  # type: ignore[arg-type]
+        guard=LoginGuard(tmp_path / "guard"),
+    )
+    with pytest.raises(ApiError, match="larger"):
+        c.get("uptime")
