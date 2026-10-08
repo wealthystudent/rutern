@@ -14,7 +14,7 @@ import httpx
 from rutern import net
 from rutern.config import Config
 from rutern.errors import ApiError, PermissionDenied, Unreachable
-from rutern.models import DeviceInfo, Vap, WanStatus, parse_vaps
+from rutern.models import DeviceInfo, Vap, WanStatus, parse, parse_vaps
 
 CONTENT_TYPE = "application/x-sah-ws-4-call+json"
 PERMISSION_DENIED = 13
@@ -65,10 +65,10 @@ class LocalClient:
     # reads
 
     def device_info(self) -> DeviceInfo:
-        return DeviceInfo.model_validate(self.call("DeviceInfo", "get").get("status"))
+        return parse(DeviceInfo, self.call("DeviceInfo", "get").get("status"), "DeviceInfo")
 
     def wan_status(self) -> WanStatus:
-        return WanStatus.model_validate(self.call("NMC", "getWANStatus").get("data"))
+        return parse(WanStatus, self.call("NMC", "getWANStatus").get("data"), "NMC.getWANStatus")
 
     def vaps(self) -> list[Vap]:
         env = self.call("NeMo.Intf.lan", "getMIBs", {"mibs": "wlanvap"})

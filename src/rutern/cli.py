@@ -677,6 +677,12 @@ def main(
         return 1
     except KeyboardInterrupt:
         return 130
+    except Exception as e:
+        if os.environ.get("RUTERN_DEBUG"):
+            raise
+        msg = f"unexpected error ({type(e).__name__}); RUTERN_DEBUG=1 shows details"
+        print(look.error(msg), file=sys.stderr)
+        return 1
     finally:
         if r is not None:
             r.close()

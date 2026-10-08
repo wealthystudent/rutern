@@ -153,3 +153,47 @@ def test_bad_env_is_a_clean_error(
     monkeypatch.setenv("RUTERN_HOST", "evil.example")
     assert main(["status"]) == 1
     assert "RUTERN_HOST" in capsys.readouterr().err
+
+
+def test_surrogate_hostname_does_not_break_output(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class EscapedSurrogate(FakeCloud):
+        """The portal sends a lone surrogate as a JSON escape."""
+
+        def __call__(self, req: httpx.Request) -> httpx.Response:
+            res = super().__call__(req)
+            body = res.content.replace(b"SURROGATE", b"\\ud800")
+            return httpx.Response(res.status_code, content=body)
+
+    cloud = EscapedSurrogate()
+    cloud.data["lan-hosts"]["hosts"][0]["hostname"] = "evilSURROGATEname"
+    for argv in (["devices", "--all"], ["devices", "--all", "--json"]):
+        code, out, _, _ = run(tmp_path, capsys, *argv, cloud=cloud)
+        assert code == 0 and "evilname" in out
+
+
+def test_unexpected_errors_are_one_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    r, _ = make_router(tmp_path)
+
+    def boom(**_: object) -> None:
+        raise KeyError("raw router text")
+
+    monkeypatch.setattr(r, "hosts", boom)
+    assert main(["devices"], router=lambda: r) == 1
+    err = capsys.readouterr().err
+    assert "unexpected error (KeyError)" in err and "raw router text" not in err
+    monkeypatch.setenv("RUTERN_DEBUG", "1")
+    with pytest.raises(KeyError):
+        main(["devices"], router=lambda: r)
+
+
+def test_odd_upnp_response_is_an_api_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cloud = FakeCloud()
+    cloud.data["upnp/mappings"] = {"upnp_mappings": "nope"}
+    code, _, err, _ = run(tmp_path, capsys, "forwards", cloud=cloud)
+    assert code == 1 and "upnp_mappings" in err

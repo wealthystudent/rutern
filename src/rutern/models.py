@@ -23,25 +23,56 @@ from pydantic import (
     Field,
     SecretStr,
     SerializationInfo,
+    ValidationError,
     field_serializer,
     field_validator,
+    model_validator,
 )
+
+from rutern.errors import ApiError
 
 REDACTED = "<redacted>"
 MAX_TEXT = 128
+MAX_ITEMS = 64
 _INVISIBLE = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]")
+# Format (bidi, zero width, tags), lone surrogates (they crash UTF-8 output),
+# private use and unassigned code points: none of them belong in a name.
+_DROP = ("Cf", "Cs", "Co", "Cn")
 
 
 def clean(value: str) -> str:
-    """Strip control and format characters and bound the length."""
+    """Strip control, format and other unprintable characters and bound the length."""
     value = _INVISIBLE.sub("", value)
     value = "".join(
         " " if unicodedata.category(c) in ("Cc", "Zl", "Zp") else c
         for c in value
-        if unicodedata.category(c) != "Cf"
+        if unicodedata.category(c) not in _DROP
     )
     value = " ".join(value.split())
     return value[:MAX_TEXT]
+
+
+def scrub(value: Any, depth: int = 0) -> Any:
+    """Clean every string in a value of unknown shape, with nesting and size capped."""
+    if isinstance(value, str):
+        return clean(value)
+    if value is None or isinstance(value, bool | int | float):
+        return value
+    if depth >= 3:
+        return None
+    if isinstance(value, list):
+        return [scrub(v, depth + 1) for v in value[:MAX_ITEMS]]
+    if isinstance(value, dict):
+        return {clean(str(k)): scrub(v, depth + 1) for k, v in list(value.items())[:MAX_ITEMS]}
+    return None
+
+
+def parse[M: BaseModel](model: type[M], data: Any, what: str) -> M:
+    """Validate router data; a mismatch is an ApiError that never repeats the values."""
+    try:
+        return model.model_validate(data)
+    except ValidationError as e:
+        raise ApiError(f"{what}: unexpected response shape ({e.error_count()} field(s))") from e
 
 
 Text = Annotated[str, AfterValidator(clean)]
@@ -98,7 +129,7 @@ def parse_vaps(wlanvap: dict[str, Any]) -> list[Vap]:
         m = _VAP.match(name)
         if not m or not isinstance(data, dict):
             continue
-        stations = sorted(normalise_mac(k) for k in (data.get("AssociatedDevice") or {}))
+        stations = sorted(_macs(data.get("AssociatedDevice")))
         out.append(
             Vap(
                 vap=name,
@@ -108,6 +139,17 @@ def parse_vaps(wlanvap: dict[str, Any]) -> list[Vap]:
                 stations=stations,
             )
         )
+    return out
+
+
+def _macs(devices: Any) -> list[str]:
+    """Station MACs, skipping keys that are not MACs (the local API is plain HTTP)."""
+    out = []
+    for k in devices if isinstance(devices, dict) else ():
+        try:
+            out.append(normalise_mac(str(k)))
+        except ValueError:
+            continue
     return out
 
 
@@ -214,9 +256,21 @@ class Wifi(Model):
 
 
 class Open(BaseModel):
-    """Items whose full field set is not known yet keep unknown fields as-is."""
+    """Items whose full field set is not known yet keep unknown fields, cleaned
+    like every other router string and capped in size."""
 
     model_config = ConfigDict(populate_by_name=True, extra="allow", frozen=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _scrub_unknown(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        known = set(cls.model_fields)
+        return {
+            k if k in known else clean(str(k)): v if k in known else scrub(v)
+            for k, v in list(data.items())[:MAX_ITEMS]
+        }
 
 
 class StaticLease(Model):

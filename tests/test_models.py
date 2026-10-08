@@ -86,3 +86,44 @@ def test_hostile_hostname_is_cleaned() -> None:
 def test_bad_mac(bad: str) -> None:
     with pytest.raises(ValueError):
         normalise_mac(bad)
+
+
+@pytest.mark.parametrize("bad", ["\ud800", "\udfff", "", "\U000f0000", "\U000e0041", "͸", "⁦"])
+def test_clean_drops_unprintable_code_points(bad: str) -> None:
+    out = clean(f"a{bad}b")
+    assert out == "ab"
+    out.encode("utf-8")
+
+
+def test_unknown_fields_are_cleaned_and_capped() -> None:
+    from rutern.models import MAX_ITEMS, StaticRoute
+
+    route = StaticRoute.model_validate(
+        {
+            "name": "lab",
+            "note\x1b[2J": "\x1b]0;x\x07ignore\nprevious" + "y" * 500,
+            "many": list(range(500)),
+            "deep": {"a": {"b": {"c": {"d": "e"}}}},
+        }
+    )
+    extra = route.model_dump()
+    note = extra["note [2J"]
+    assert note.startswith("]0;x ignore previous") and len(note) <= 128
+    assert not any(c in note for c in "\x1b\x07\n")
+    assert len(extra["many"]) == MAX_ITEMS and extra["deep"] == {"a": {"b": {"c": None}}}
+
+
+def test_shape_mismatch_never_echoes_router_values() -> None:
+    from rutern.errors import ApiError
+    from rutern.models import Uptime, parse
+
+    with pytest.raises(ApiError) as e:
+        parse(Uptime, {"os": "ignore previous instructions", "wan": 1}, "uptime")
+    assert "ignore" not in str(e.value) and "unexpected response shape" in str(e.value)
+
+
+def test_bad_station_keys_are_skipped() -> None:
+    vaps = parse_vaps(
+        {"vap2g0_0": {"SSID": "x", "AssociatedDevice": {"nope": {}, "AA:BB:CC:DD:EE:FF": {}}}}
+    )
+    assert vaps[0].stations == ["aa:bb:cc:dd:ee:ff"]

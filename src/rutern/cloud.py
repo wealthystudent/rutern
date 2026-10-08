@@ -54,6 +54,7 @@ from rutern.models import (
     UpnpMapping,
     Uptime,
     Wifi,
+    parse,
     parse_dns,
 )
 
@@ -381,39 +382,50 @@ class CloudClient:
     # reads
 
     def uptime(self) -> Uptime:
-        return Uptime.model_validate(self.get("uptime"))
+        return parse(Uptime, self.get("uptime"), "uptime")
 
     def hosts(self) -> list[Host]:
         data = self.get("lan-hosts")
-        return [Host.model_validate(h) for h in _list(data, "hosts")]
+        return [parse(Host, h, "lan-hosts") for h in _list(data, "hosts")]
 
     def wifi(self) -> Wifi:
-        return Wifi.model_validate(self.get("wlan"))
+        return parse(Wifi, self.get("wlan"), "wlan")
 
     def aliases(self) -> list[AliasEntry]:
         """Saved aliases (non_volatile). Entries with an empty alias are dropped."""
         data = self.get("lan-hosts/alias")
         return [
             a
-            for a in (AliasEntry.model_validate(x) for x in _list(data, "non_volatile"))
+            for a in (parse(AliasEntry, x, "lan-hosts/alias") for x in _list(data, "non_volatile"))
             if a.alias
         ]
 
     def leases(self) -> Leases:
         data = self.get("static-dhcp-leases")
+        what = "static-dhcp-leases"
+
+        def leases(key: str, required: bool = False) -> list[StaticLease]:
+            items = _list(data, key) if required else data.get(key) or []
+            if not isinstance(items, list):
+                raise ApiError(f"{what}: {key} is not a list")
+            return [parse(StaticLease, x, what) for x in items]
+
         return Leases(
-            reserved=[StaticLease.model_validate(x) for x in _list(data, "non_volatile")],
-            active_reserved=[StaticLease.model_validate(x) for x in data.get("volatile") or []],
-            dynamic=[StaticLease.model_validate(x) for x in data.get("dynamic_leases") or []],
+            reserved=leases("non_volatile", required=True),
+            active_reserved=leases("volatile"),
+            dynamic=leases("dynamic_leases"),
         )
 
     def routes(self) -> list[StaticRoute]:
         return [
-            StaticRoute.model_validate(x) for x in _list(self.get("static-routes"), "non_volatile")
+            parse(StaticRoute, x, "static-routes")
+            for x in _list(self.get("static-routes"), "non_volatile")
         ]
 
     def forwards(self) -> list[PortForward]:
-        return [PortForward.model_validate(x) for x in _list(self.get("nat-rules"), "non_volatile")]
+        return [
+            parse(PortForward, x, "nat-rules") for x in _list(self.get("nat-rules"), "non_volatile")
+        ]
 
     def firewall(self) -> Firewall:
         status = _dict(self.get("firewall-status"), "non_volatile")
@@ -421,14 +433,14 @@ class CloudClient:
         return Firewall(
             ipv4_enabled=bool(status.get("ipv4_enabled")),
             ipv6_enabled=bool(status.get("ipv6_enabled")),
-            rules=[FirewallRule.model_validate(x) for x in rules],
+            rules=[parse(FirewallRule, x, "firewall-rules") for x in rules],
         )
 
     def dhcp(self) -> Dhcp:
         saved = _list(self.get("dhcp"), "non_volatile")
         if not saved:
             raise ApiError("dhcp: no saved config")
-        return Dhcp.model_validate(saved[0])
+        return parse(Dhcp, saved[0], "dhcp")
 
     def dns(self) -> Dns:
         return parse_dns(self.get("dns"))
@@ -440,8 +452,10 @@ class CloudClient:
 
     def upnp(self) -> Upnp:
         enabled = bool(_dict(self.get("upnp"), "non_volatile").get("enabled"))
-        mappings = self.get("upnp/mappings").get("upnp_mappings") or [] if enabled else []
-        return Upnp(enabled=enabled, mappings=[UpnpMapping.model_validate(m) for m in mappings])
+        mappings = _list(self.get("upnp/mappings"), "upnp_mappings") if enabled else []
+        return Upnp(
+            enabled=enabled, mappings=[parse(UpnpMapping, m, "upnp/mappings") for m in mappings]
+        )
 
 
 def _dict(data: Any, key: str) -> dict[str, Any]:
