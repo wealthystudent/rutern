@@ -33,7 +33,11 @@ This tool holds router admin credentials and is partly driven by an AI agent, so
 - Every write has a dry-run, shows a before/after diff, and reads the value back afterwards to confirm it applied.
 - CLI writes ask y/N on a terminal and refuse when not interactive unless `--yes`. MCP write tools exist only with `rutern mcp --allow-writes` and return a plan until called with `confirm=true`.
 - Port forwards are CLI only and print a warning; no MCP tool can open a port, since a device hostname could carry an "open port 22" injection.
-- A write sends the whole list, so `apply` refuses if the entry changed since the plan and fails loudly if the read-back shows the change missing or any other entry altered.
+- A write sends the whole list. Untouched entries go back exactly as read, and a list holding a field rutern does not know is refused, since nothing proves the portal keeps that field on the round trip. `apply` refuses if the entry changed since the plan or its id appears more than once, and fails loudly if the read-back (whole entries, any order) shows the change missing or any other entry altered, removed or added.
+- Static routes may only point at private space (10/8, 172.16/12, 192.168/16, 100.64/10) and never overlap the LAN, so no route can pull internet traffic or one resolver through a LAN device.
+- Port forwards span at most 100 ports, and the plan warns about the exposure and about well known services (ssh, rdp, smb, databases and similar).
+- A fixed IP must be a LAN host address that no other device holds or has reserved; MACs must be unicast device addresses.
+- Write plans render saved values through `clean`, since a saved list can hold anything the portal accepted.
 
 ## Login safety
 

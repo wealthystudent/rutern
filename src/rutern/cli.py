@@ -166,16 +166,15 @@ def render_change(c: Change) -> str:
     before, after = writes.describe(c.kind, c.before), writes.describe(c.kind, c.after)
     action = "add" if c.before is None else "remove" if c.after is None else "change"
     what = f"{c.label}  {look.fg(look.DIM, c.id)}" if c.label != c.id else c.label
-    return look.frame(
-        f"{action} {TITLES[c.kind]}",
-        look.kv(
-            [
-                ("entry", what),
-                ("before", look.fg(look.ERROR, before) if before else look.fg(look.DIM, "(none)")),
-                ("after", look.fg(look.OK, after) if after else look.fg(look.DIM, "(none)")),
-            ]
-        ),
+    lines = look.kv(
+        [
+            ("entry", what),
+            ("before", look.fg(look.ERROR, before) if before else look.fg(look.DIM, "(none)")),
+            ("after", look.fg(look.OK, after) if after else look.fg(look.DIM, "(none)")),
+        ]
     )
+    lines += [look.fg(look.KEY, f"warning: {w}") for w in c.warnings]
+    return look.frame(f"{action} {TITLES[c.kind]}", lines)
 
 
 def on_off(on: bool) -> str:
@@ -241,13 +240,21 @@ def render_routes(routes: list[StaticRoute]) -> str:
     return look.frame("static routes", lines)
 
 
-def ports(start: int, end: int) -> str:
-    return str(start) if start == end else f"{start}-{end}"
+def ports(start: int | None, end: int | None) -> str:
+    if start is None:
+        return "-"
+    return str(start) if end in (None, start) else f"{start}-{end}"
 
 
 def render_forwards(forwards: list[PortForward], upnp: Upnp) -> str:
     rows = [
-        [f.name, f.protocol, str(f.wan_port or "-"), f.lan_ip, str(f.lan_port or "-")]
+        [
+            f.name,
+            f.protocol,
+            ports(f.wan_port_start, f.wan_port_end),
+            f.lan_ip,
+            ports(f.lan_port_start, f.lan_port_end),
+        ]
         for f in forwards
     ]
     head = ["name", "proto", "wan port", "to ip", "port"]
@@ -364,8 +371,6 @@ def run_change(r: Router, a: argparse.Namespace, change: Change) -> str:
         if a.json:
             return dump({"dry_run": True, **change.model_dump()})
         return shown + "\ndry run, nothing written"
-    if change.kind == "forward" and change.after and not a.json:
-        shown += "\n" + look.fg(look.KEY, "this opens a port on your public IP to the internet")
     if not a.yes:
         if not a.json:
             print(shown)

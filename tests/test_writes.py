@@ -87,7 +87,13 @@ def test_route_add_and_remove(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("dest", "hop", "match"),
     [
-        ("0.0.0.0/0", "10.0.0.42", "default route"),
+        ("0.0.0.0/0", "10.0.0.42", "not a private network"),
+        ("0.0.0.0/1", "10.0.0.42", "not a private network"),
+        ("128.0.0.0/1", "10.0.0.42", "not a private network"),
+        ("1.1.1.1/32", "10.0.0.42", "not a private network"),
+        ("224.0.0.0/4", "10.0.0.42", "not a private network"),
+        ("10.0.0.0/25", "10.0.0.42", "overlaps the LAN"),
+        ("10.0.0.0/8", "10.0.0.42", "overlaps the LAN"),
         ("bogus", "10.0.0.42", "not an IPv4 network"),
         ("10.9.0.0/24", "192.168.1.1", "not a host address in the LAN"),
         ("10.9.0.0/24", None, "needs a next hop"),
@@ -130,6 +136,8 @@ def test_forward_add_and_remove(tmp_path: Path) -> None:
         ("tcp", "90-80", None, "low to high"),
         ("tcp", "80-81", "80", "same size"),
         ("tcp", "x", None, "like 443"),
+        ("tcp", "1-65535", None, "more than 100 ports"),
+        ("tcp", "1000-1100", None, "more than 100 ports"),
     ],
 )
 def test_forward_refuses(
@@ -223,3 +231,110 @@ def test_mcp_write_tools(tmp_path: Path) -> None:
     assert cloud.posts == []
     asyncio.run(s.call_tool("set_fixed_ip", {"mac": KNOWN, "ip": FREE_IP, "confirm": True}))
     assert cloud.posts[-1][0] == "static-dhcp-leases"
+
+
+def test_private_route_destinations_are_allowed(tmp_path: Path) -> None:
+    r, _ = make_router(tmp_path)
+    for dest in ("100.64.0.0/10", "192.168.50.0/24", "172.16.5.0/24"):
+        assert r.plan_route("lab", dest, "10.0.0.42").after is not None
+
+
+@pytest.mark.parametrize("bad", ["00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff", "01:00:5e:00:00:01"])
+def test_lease_refuses_non_device_macs(tmp_path: Path, bad: str) -> None:
+    r, _ = make_router(tmp_path)
+    with pytest.raises(WriteRefused, match="not a device address"):
+        r.plan_lease(bad, FREE_IP)
+
+
+def test_lease_refuses_an_ip_in_use(tmp_path: Path) -> None:
+    r, cloud = make_router(tmp_path)
+    reserved = {x["ip_address"] for x in saved(cloud, "static-dhcp-leases")}
+    other = next(
+        h for h in r.hosts() if h.active and h.ipv4 and h.mac != KNOWN and h.ipv4 not in reserved
+    )
+    with pytest.raises(WriteRefused, match="in use right now"):
+        r.plan_lease(KNOWN, other.ipv4)
+
+
+def test_forward_warns_about_exposure(tmp_path: Path) -> None:
+    r, _ = make_router(tmp_path)
+    plain = r.plan_forward("web", "tcp", "8443", "10.0.0.5")
+    assert plain.warnings == ["opens tcp 8443 to 10.0.0.5:8443 to the internet"]
+    ssh = r.plan_forward("ssh", "tcp", "2222", "10.0.0.5", "22")
+    assert "22 (ssh)" in ssh.warnings[1]
+
+
+def test_unknown_fields_in_saved_list_block_the_write(tmp_path: Path) -> None:
+    cloud = FakeCloud()
+    cloud.data["nat-rules"]["non_volatile"] = [
+        {
+            "name": "cam",
+            "protocol": "tcp",
+            "lan_ip": "10.0.0.9",
+            "wan_port_start": 554,
+            "wan_port_end": 554,
+            "lan_port_start": 554,
+            "lan_port_end": 554,
+            "remote_ip": "198.51.100.7",
+        }
+    ]
+    r, _ = make_router(tmp_path, cloud=cloud)
+    with pytest.raises(WriteRefused, match="fields rutern does not know \\(remote_ip\\)"):
+        r.plan_forward("web", "tcp", "8443", "10.0.0.5")
+    assert cloud.posts == []
+
+
+def test_untouched_entries_go_back_exactly(tmp_path: Path) -> None:
+    r, cloud = make_router(tmp_path)
+    before = saved(cloud, "static-dhcp-leases")
+    r.apply(r.plan_lease(KNOWN, FREE_IP))
+    assert cloud.posts[-1][1]["leases"][:-1] == before
+
+
+def test_read_back_sees_a_changed_field_on_another_entry(tmp_path: Path) -> None:
+    cloud = FakeCloud()
+    r, _ = make_router(tmp_path, cloud=cloud)
+    plan = r.plan_lease(KNOWN, FREE_IP)
+
+    def tamper(c: FakeCloud) -> None:
+        c.data["static-dhcp-leases"]["non_volatile"][0]["srcservice"] = "changed"
+
+    cloud.after_post = tamper
+    with pytest.raises(ApiError, match="other entries"):
+        r.apply(plan)
+
+
+def test_read_back_tolerates_reordering_but_not_additions(tmp_path: Path) -> None:
+    cloud = FakeCloud()
+    r, _ = make_router(tmp_path, cloud=cloud)
+    cloud.after_post = lambda c: c.data["static-dhcp-leases"]["non_volatile"].reverse()
+    r.apply(r.plan_lease(KNOWN, FREE_IP))
+
+    extra = {"mac": "02:00:00:00:00:99", "ip_address": "10.0.0.201", "srcservice": ""}
+    cloud.after_post = lambda c: c.data["static-dhcp-leases"]["non_volatile"].append(extra)
+    with pytest.raises(ApiError, match="other entries"):
+        r.apply(r.plan_lease(KNOWN, "10.0.0.202"))
+
+
+def test_duplicate_ids_block_the_write(tmp_path: Path) -> None:
+    cloud = FakeCloud()
+    cloud.data["lan-hosts/alias"]["non_volatile"] += [
+        {"mac": KNOWN, "hostname": "a"},
+        {"mac": KNOWN.upper(), "hostname": "b"},
+    ]
+    r, _ = make_router(tmp_path, cloud=cloud)
+    with pytest.raises(WriteRefused, match="2 saved entries share"):
+        r.plan_alias(KNOWN, "Den")
+
+
+def test_plan_renders_saved_values_cleanly(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cloud = FakeCloud()
+    cloud.data["lan-hosts/alias"]["non_volatile"].append(
+        {"mac": KNOWN, "hostname": "evil\x1b]0;pwned\x07\nname"}
+    )
+    r, _ = make_router(tmp_path, cloud=cloud)
+    code = main(["host", "alias", "set", KNOWN, "Den", "--dry-run"], router=lambda: r)
+    out = capsys.readouterr().out
+    assert code == 0 and "evil" in out and "\x1b]0" not in out and "\x07" not in out

@@ -247,8 +247,10 @@ class PortForward(Open):
     name: Text = ""
     protocol: Text = ""
     lan_ip: Text = ""
-    lan_port: Text | int | None = None
-    wan_port: Text | int | None = None
+    wan_port_start: int | None = None
+    wan_port_end: int | None = None
+    lan_port_start: int | None = None
+    lan_port_end: int | None = None
 
 
 class FirewallRule(Open):

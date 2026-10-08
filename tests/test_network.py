@@ -46,12 +46,13 @@ def test_unknown_item_fields_are_kept(tmp_path: Path) -> None:
         {"name": "lab", "destination": "10.9.0.0/24", "next_hop": "10.0.0.42", "metric": 5}
     ]
     cloud.data["nat-rules"]["non_volatile"] = [
-        {"name": "ssh", "protocol": "tcp", "lan_ip": "10.0.0.5", "lan_port": 22, "wan_port": 2222}
+        {"name": "ssh", "protocol": "tcp", "lan_ip": "10.0.0.5", "wan_port_start": 2222, "x": 1}
     ]
     r, _ = make_router(tmp_path, cloud=cloud)
     route = r.cloud.routes()[0]
     assert route.next_hop == "10.0.0.42" and route.model_dump()["metric"] == 5
-    assert r.cloud.forwards()[0].wan_port == 2222
+    fwd = r.cloud.forwards()[0]
+    assert fwd.wan_port_start == 2222 and fwd.model_dump()["x"] == 1
 
 
 def test_hostile_upnp_name_is_cleaned(tmp_path: Path) -> None:
@@ -82,3 +83,22 @@ def test_cli_network_commands(
     assert main([cmd, "--json"], router=lambda: r) == 0
     json.loads(capsys.readouterr().out)
     assert cloud.posts == []
+
+
+def test_forwards_show_their_ports(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    cloud = FakeCloud()
+    cloud.data["nat-rules"]["non_volatile"] = [
+        {
+            "name": "web",
+            "protocol": "tcp",
+            "lan_ip": "10.0.0.5",
+            "wan_port_start": 8000,
+            "wan_port_end": 8002,
+            "lan_port_start": 9000,
+            "lan_port_end": 9002,
+        }
+    ]
+    r, _ = make_router(tmp_path, cloud=cloud)
+    assert main(["forwards"], router=lambda: r) == 0
+    out = capsys.readouterr().out
+    assert "8000-8002" in out and "9000-9002" in out

@@ -113,10 +113,6 @@ class Router:
 
     # writes: plan_* never write; apply() writes one planned change and verifies it
 
-    def _device_label(self, mac: str) -> str:
-        host = next((h for h in self.cloud.hosts() if h.mac == mac), None)
-        return host.name if host else "unknown device"
-
     def _lan(self) -> tuple[ipaddress.IPv4Network, str]:
         router = self.cloud.dhcp().router_address
         return writes.lan_network(router), router
@@ -139,6 +135,7 @@ class Router:
     def plan_lease(self, mac: str, ip: str | None) -> Change:
         """Give a device a fixed IP, or with ip=None remove its reservation."""
         mac = writes.mac(mac)
+        hosts = self.cloud.hosts()
         before = writes.current(self.cloud, "lease", mac)
         after = None
         if ip is not None:
@@ -151,12 +148,15 @@ class Router:
             ]
             if taken:
                 raise WriteRefused(f"{ip} is already reserved for another device")
+            busy = next((h for h in hosts if h.active and h.ipv4 == ip and h.mac != mac), None)
+            if busy:
+                raise WriteRefused(f"{ip} is in use right now by {busy.mac}")
             after = {**(before or {"srcservice": ""}), "mac": mac, "ip_address": ip}
         elif before is None:
             raise WriteRefused(f"{mac} has no fixed IP")
-        return Change(
-            kind="lease", id=mac, label=self._device_label(mac), before=before, after=after
-        )
+        host = next((h for h in hosts if h.mac == mac), None)
+        label = host.name if host else "unknown device"
+        return Change(kind="lease", id=mac, label=label, before=before, after=after)
 
     def plan_route(
         self, name: str, destination: str | None = None, next_hop: str | None = None
@@ -171,7 +171,7 @@ class Router:
             lan, router = self._lan()
             after = {
                 "name": name,
-                "destination": writes.network(destination),
+                "destination": writes.network(destination, lan),
                 "next_hop": writes.lan_ip(next_hop, lan, router, "next hop"),
             }
         elif before is None:
@@ -190,6 +190,7 @@ class Router:
         name = writes.name(name)
         before = writes.current(self.cloud, "forward", name)
         after = None
+        warnings: list[str] = []
         if protocol is not None:
             if wan_port is None or lan_ip is None:
                 raise WriteRefused("a port forward needs a WAN port and a LAN IP")
@@ -210,9 +211,18 @@ class Router:
                 "lan_port_start": lan[0],
                 "lan_port_end": lan[1],
             }
+            warnings.append(f"opens {writes.describe('forward', after)} to the internet")
+            services = writes.risky(wan, lan)
+            if services:
+                warnings.append(
+                    f"exposes {', '.join(services)}, a common target for attacks; "
+                    "only forward it if that service is hardened and patched"
+                )
         elif before is None:
             raise WriteRefused(f"no port forward named {name!r}")
-        return Change(kind="forward", id=name, label=name, before=before, after=after)
+        return Change(
+            kind="forward", id=name, label=name, before=before, after=after, warnings=warnings
+        )
 
     def apply(self, change: Change) -> Change:
         if not change.noop:

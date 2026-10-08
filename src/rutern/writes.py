@@ -5,6 +5,10 @@ the saved list, change one entry, send the full list, read it back and check
 that the entry changed and nothing else did. A plan records the entry as it
 was; if it moved on before the write, the write is refused.
 
+Untouched entries go back exactly as read. A list holding a field rutern does
+not know is refused outright, since nothing proves the portal keeps that
+field on the round trip. The read-back compares whole entries, not a subset.
+
 Verified live: the body keys (from the API's validation errors) and, for
 aliases and fixed IPs, the item fields (by writing the saved list back
 unchanged). Route and port forward item fields come from validation errors;
@@ -14,15 +18,59 @@ no real route or forward has been written yet.
 from __future__ import annotations
 
 import ipaddress
+import json
 from dataclasses import dataclass
 from typing import Any, Literal
+
+from pydantic import Field
 
 from rutern.cloud import CloudClient
 from rutern.errors import ApiError, WriteRefused
 from rutern.models import Model, Text, clean, normalise_mac
 
 Kind = Literal["alias", "lease", "route", "forward"]
+KINDS: tuple[Kind, ...] = ("alias", "lease", "route", "forward")
 MAX_NAME = 63
+MAX_FORWARD_PORTS = 100
+
+# Routes may only point at private space, so no route can pull internet
+# traffic (all of it, or one resolver) through a device on the LAN.
+ROUTABLE = tuple(
+    ipaddress.IPv4Network(n)
+    for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10")
+)
+
+# Services that are common targets when exposed to the internet.
+RISKY_PORTS = {
+    21: "ftp",
+    22: "ssh",
+    23: "telnet",
+    25: "smtp",
+    53: "dns",
+    111: "rpcbind",
+    135: "msrpc",
+    137: "netbios",
+    138: "netbios",
+    139: "netbios",
+    161: "snmp",
+    389: "ldap",
+    445: "smb",
+    1433: "mssql",
+    1900: "upnp",
+    2049: "nfs",
+    2375: "docker",
+    2376: "docker",
+    3306: "mysql",
+    3389: "rdp",
+    5432: "postgres",
+    5900: "vnc",
+    5985: "winrm",
+    5986: "winrm",
+    6379: "redis",
+    9200: "elasticsearch",
+    11211: "memcached",
+    27017: "mongodb",
+}
 
 
 @dataclass(frozen=True)
@@ -62,6 +110,7 @@ class Change(Model):
     label: Text
     before: dict[str, Any] | None
     after: dict[str, Any] | None
+    warnings: list[str] = Field(default_factory=list)
 
     @property
     def noop(self) -> bool:
@@ -78,28 +127,58 @@ def _id(spec: ListSpec, value: Any) -> str:
     return text
 
 
-def saved(cloud: CloudClient, kind: Kind) -> list[dict[str, Any]]:
-    """The saved list, trimmed to the fields rutern sends back."""
-    spec = LISTS[kind]
+def _read(cloud: CloudClient, spec: ListSpec) -> list[dict[str, Any]]:
     raw = cloud.get(spec.endpoint)
     items = raw.get("non_volatile") if isinstance(raw, dict) else None
-    if not isinstance(items, list):
+    if not isinstance(items, list) or not all(isinstance(x, dict) for x in items):
         raise ApiError(f"{spec.endpoint}: no saved list")
-    return [{f: x[f] for f in spec.fields if f in x} for x in items if isinstance(x, dict)]
+    return items
+
+
+def saved(cloud: CloudClient, kind: Kind) -> list[dict[str, Any]]:
+    """The saved list exactly as stored, refused when an entry has a field
+    rutern does not know (sending it back could drop that field)."""
+    spec = LISTS[kind]
+    items = _read(cloud, spec)
+    unknown = sorted({k for x in items for k in x} - set(spec.fields))
+    if unknown:
+        names = ", ".join(clean(str(k)) for k in unknown[:5])
+        raise WriteRefused(
+            f"saved {spec.endpoint} entries have fields rutern does not know ({names}); "
+            "writing the list back could drop them, so rutern will not write it"
+        )
+    return items
+
+
+def _ids(spec: ListSpec, items: list[dict[str, Any]]) -> list[str]:
+    return [_id(spec, x.get(spec.id_field)) for x in items]
+
+
+def _one(ids: list[str], entry_id: str) -> None:
+    if ids.count(entry_id) > 1:
+        raise WriteRefused(
+            f"{ids.count(entry_id)} saved entries share {entry_id}; fix that in the portal first"
+        )
 
 
 def current(cloud: CloudClient, kind: Kind, entry_id: str) -> dict[str, Any] | None:
     spec = LISTS[kind]
-    return next(
-        (x for x in saved(cloud, kind) if _id(spec, x.get(spec.id_field)) == entry_id), None
-    )
+    items = saved(cloud, kind)
+    ids = _ids(spec, items)
+    _one(ids, entry_id)
+    return items[ids.index(entry_id)] if entry_id in ids else None
+
+
+def _bag(items: list[dict[str, Any]]) -> list[str]:
+    return sorted(json.dumps(x, sort_keys=True) for x in items)
 
 
 def apply(cloud: CloudClient, change: Change) -> None:
     """Write the full list with one entry changed, then verify by read-back."""
     spec = LISTS[change.kind]
     items = saved(cloud, change.kind)
-    ids = [_id(spec, x.get(spec.id_field)) for x in items]
+    ids = _ids(spec, items)
+    _one(ids, change.id)
     found = items[ids.index(change.id)] if change.id in ids else None
     if found != change.before:
         raise WriteRefused("the entry changed since the plan was made; plan again")
@@ -112,15 +191,17 @@ def apply(cloud: CloudClient, change: Change) -> None:
         new = [*items, change.after]
     cloud.post(spec.endpoint, {spec.body_key: new})
 
-    after = {_id(spec, x.get(spec.id_field)): x for x in saved(cloud, change.kind)}
-    got = after.get(change.id)
+    back = _read(cloud, spec)
+    back_ids = _ids(spec, back)
+    got = [x for x, i in zip(back, back_ids, strict=True) if i == change.id]
     if change.after is None:
-        if got is not None:
+        if got:
             raise ApiError("write sent but the entry is still there on read-back")
-    elif got is None or any(got.get(k) != v for k, v in change.after.items()):
+    elif len(got) != 1 or any(got[0].get(k) != v for k, v in change.after.items()):
         raise ApiError("write sent but the read-back does not show the change")
     others = [x for x, i in zip(items, ids, strict=True) if i != change.id]
-    if any(after.get(_id(spec, x.get(spec.id_field))) != x for x in others):
+    back_others = [x for x, i in zip(back, back_ids, strict=True) if i != change.id]
+    if _bag(back_others) != _bag(others):
         raise ApiError("write changed other entries too; check the portal")
 
 
@@ -135,10 +216,14 @@ def name(value: str, what: str = "name") -> str:
 
 
 def mac(value: str) -> str:
+    """A single device's MAC: not zero, broadcast or multicast."""
     try:
-        return normalise_mac(value)
+        out = normalise_mac(value)
     except ValueError as e:
         raise WriteRefused(str(e)) from e
+    if out == "00:00:00:00:00:00" or int(out[:2], 16) & 1:
+        raise WriteRefused(f"{out} is not a device address (zero, broadcast or multicast)")
+    return out
 
 
 def lan_network(router_address: str) -> ipaddress.IPv4Network:
@@ -160,15 +245,21 @@ def lan_ip(value: str, lan: ipaddress.IPv4Network, router: str, what: str = "IP"
     return str(ip)
 
 
-def network(value: str) -> str:
+def network(value: str, lan: ipaddress.IPv4Network) -> str:
+    """A route destination: private, and clear of the LAN itself."""
     try:
         net = ipaddress.IPv4Network(value.strip(), strict=False)
     except ValueError as e:
         raise WriteRefused(
             f"destination {clean(value)!r} is not an IPv4 network like 10.1.0.0/24"
         ) from e
-    if net.prefixlen == 0:
-        raise WriteRefused("a default route (0.0.0.0/0) is not allowed")
+    if not any(net.subnet_of(r) for r in ROUTABLE):
+        raise WriteRefused(
+            f"destination {net} is not a private network; routes may only point at "
+            "10/8, 172.16/12, 192.168/16 or 100.64/10"
+        )
+    if net.overlaps(lan):
+        raise WriteRefused(f"destination {net} overlaps the LAN {lan}")
     return str(net)
 
 
@@ -181,23 +272,41 @@ def port_range(value: str, what: str) -> tuple[int, int]:
         raise WriteRefused(f"{what} must be a port like 443 or a range like 8000-8010") from e
     if not 1 <= start <= end <= 65535:
         raise WriteRefused(f"{what} must be between 1 and 65535, low to high")
+    if end - start + 1 > MAX_FORWARD_PORTS:
+        raise WriteRefused(f"{what} spans more than {MAX_FORWARD_PORTS} ports")
     return start, end
 
 
+def risky(*ranges: tuple[int, int]) -> list[str]:
+    """Names of well known services inside the given port ranges."""
+    hits = {
+        f"{port} ({svc})"
+        for lo, hi in ranges
+        for port, svc in RISKY_PORTS.items()
+        if lo <= port <= hi
+    }
+    return sorted(hits, key=lambda s: int(s.split()[0]))
+
+
 def describe(kind: Kind, entry: dict[str, Any] | None) -> str:
-    """One line for a before/after entry."""
+    """One line for a before/after entry. Values pass through clean, since a
+    saved list can hold anything the portal accepted."""
     if entry is None:
         return ""
+
+    def v(key: str) -> str:
+        return clean(str(entry.get(key, "")))
+
     if kind == "alias":
-        return str(entry.get("hostname", ""))
+        return v("hostname")
     if kind == "lease":
-        return str(entry.get("ip_address", ""))
+        return v("ip_address")
     if kind == "route":
-        return f"{entry.get('destination')} via {entry.get('next_hop')}"
-    wan = _ports(entry.get("wan_port_start"), entry.get("wan_port_end"))
-    lan = _ports(entry.get("lan_port_start"), entry.get("lan_port_end"))
-    return f"{entry.get('protocol')} {wan} to {entry.get('lan_ip')}:{lan}"
+        return f"{v('destination')} via {v('next_hop')}"
+    wan = _ports(v("wan_port_start"), v("wan_port_end"))
+    lan = _ports(v("lan_port_start"), v("lan_port_end"))
+    return f"{v('protocol')} {wan} to {v('lan_ip')}:{lan}"
 
 
-def _ports(start: Any, end: Any) -> str:
-    return str(start) if end in (None, start) else f"{start}-{end}"
+def _ports(start: str, end: str) -> str:
+    return start if end in ("", start) else f"{start}-{end}"
