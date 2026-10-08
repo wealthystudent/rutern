@@ -5,8 +5,8 @@
 
 Raw responses are scrubbed in memory before anything is written. Nothing
 raw is printed: the script reports file names and a key/type outline only.
-Secrets (keys, passphrases, serials), MACs, hostnames, SSIDs, public IPv4
-and IPv6 addresses are replaced with stable placeholders.
+Secrets (keys, passphrases, serials), MACs, hostnames, vendors, SSIDs,
+public IPv4 and IPv6 addresses are replaced with stable placeholders.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ SECRET_KEY = re.compile(r"key|pass|secret|psk|pin|token|cookie|credential", re.I
 SERIAL_KEY = re.compile(r"serial", re.I)
 NAME_KEY = re.compile(r"^(hostname|hostname_alias|name|alias|devicename|friendlyname)$", re.I)
 SSID_KEY = re.compile(r"ssid$", re.I)
+VENDOR_KEY = re.compile(r"^vendor$", re.I)
 MAC_RE = re.compile(r"\b[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}\b")
 V4_RE = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
 V6_RE = re.compile(r"\b[0-9A-Fa-f]{1,4}(?::[0-9A-Fa-f]{0,4}){2,7}(?:/\d{1,3})?")
@@ -89,6 +90,8 @@ class Scrubber:
             return self._sub("ssid", obj, "ssid-{}")
         if NAME_KEY.match(key):
             return self._sub("name", obj, "device-{}")
+        if VENDOR_KEY.match(key):
+            return self._sub("vendor", obj, "vendor-{}")
         if "version" in key.lower():
             return obj
         return self.text(obj)

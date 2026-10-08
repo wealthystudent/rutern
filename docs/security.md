@@ -20,7 +20,7 @@ This tool holds router admin credentials and is partly driven by an AI agent, so
 - Treat every router-sourced string as untrusted data, never as instructions. No router-sourced value may trigger a write without explicit user confirmation.
 - Models strip control, format and bidi characters and cap length (128) on every router string, so a hostname cannot drive the terminal or hide text.
 - MCP results wrap router values under `data` with `untrusted: true` and a note saying so; the server instructions repeat it.
-- Fixtures are scrubbed in memory before writing (keys, serials, MACs, hostnames, SSIDs, public IPs), and the recorder fails if any captured secret or SSID appears in any fixture file.
+- Fixtures are scrubbed in memory before writing (keys, serials, MACs, hostnames, vendors, SSIDs, public IPs), and the recorder fails if any captured secret or SSID appears in any fixture file.
 
 ## Least privilege and writes
 
