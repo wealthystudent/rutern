@@ -29,6 +29,7 @@ src/rutern/
   config.py       LAN host, fixed portal URL, reference validation, private state files
   net.py          HTTP send with a response size cap
   policy.py       owner policy file: write kinds per channel, read-only by default
+  audit.py        append-only write log with the list as it was before each write
   keychain.py     Keychain read of the admin password; session cookie cache
   errors.py       ConfigError, Unreachable, PermissionDenied, AuthRequired, LoginFailed, LoginBlocked, ApiError, NotAllowed, WriteRefused
   models.py       Pydantic models; router strings cleaned, secrets redacted

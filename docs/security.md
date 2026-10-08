@@ -32,6 +32,7 @@ This tool holds router admin credentials and is partly driven by an AI agent, so
 - Responses are read up to 2 MiB; the local API is plain HTTP, so anyone intercepting the LAN could otherwise answer with an endless body.
 - Destructive endpoints are excluded from the code entirely, not merely hidden: `factory-reset`, `reboot`, `msan/reset-ont`, `msan/reset-port`, `msan/reset-config`, `msan/dsl-reprovision`.
 - Every write has a dry-run, shows a before/after diff, and reads the value back afterwards to confirm it applied.
+- Every write is recorded in `~/.local/state/rutern/audit.jsonl` (0600): first the intent, with the whole saved list as it was (the backup to restore from), the channel and who approved it; then the outcome. A write whose intent cannot be recorded is not sent. `rutern history` lists them.
 - CLI writes ask y/N on a terminal and refuse when not interactive unless `--yes`. Adding or changing a port forward ignores `--yes`: it needs a person at an interactive terminal typing the WAN port. Removing one reduces exposure and takes `--yes`.
 - Port forwards are CLI only and print a warning; no MCP tool can open a port, since a device hostname could carry an "open port 22" injection.
 - MCP write tools exist only for kinds in the policy's `mcp_writes` and only with `rutern mcp --allow-writes`. Without `confirm` a tool returns the plan. With `confirm=true` the server asks the person through the MCP client (elicitation); only their answer applies the change, never the agent's.

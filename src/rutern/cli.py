@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from rutern import __version__, look, policy, writes
+from rutern import __version__, audit, look, policy, writes
 from rutern.errors import ConfigError, NotAllowed, RuternError, WriteRefused
 from rutern.models import (
     Firewall,
@@ -23,6 +23,7 @@ from rutern.models import (
     Upnp,
     Wifi,
     WifiNetwork,
+    clean,
 )
 from rutern.policy import Policy
 from rutern.router import Router, Status
@@ -409,9 +410,14 @@ def run_change(r: Router, a: argparse.Namespace, change: Change) -> str:
         want = ports(change.after["wan_port_start"], change.after["wan_port_end"])
         if ask(f"type {look.fg(look.KEY, want)} to open it to the internet: ") != want:
             raise WriteRefused("not confirmed; nothing written")
-    elif not a.yes and not confirm(f"apply? {look.fg(look.KEY, 'y')}/{look.fg(look.KEY, 'N')} "):
+        by = "port typed at a terminal"
+    elif a.yes:
+        by = "--yes"
+    elif confirm(f"apply? {look.fg(look.KEY, 'y')}/{look.fg(look.KEY, 'N')} "):
+        by = "y at a terminal"
+    else:
         raise WriteRefused("not confirmed; nothing written (pass --yes when not interactive)")
-    r.apply(change)
+    r.apply(change, by=by)
     if a.json:
         return dump({"changed": True, "verified": True, **change.model_dump()})
     shown_before = opens_ports(change) or not a.yes
@@ -459,6 +465,40 @@ def cmd_login(r: Router, a: argparse.Namespace) -> str:
 def cmd_logout(r: Router, a: argparse.Namespace) -> str:
     r.cloud.logout()
     return "session forgotten and login guard cleared"
+
+
+def render_history(events: list[dict[str, Any]]) -> str:
+    rows = []
+    for e in events:
+        kind = e.get("kind") if e.get("kind") in TITLES else None
+        if kind is None:
+            continue
+        before, after = (
+            writes.describe(kind, e.get("before")),
+            writes.describe(kind, e.get("after")),
+        )
+        action = "add" if not before else "remove" if not after else "change"
+        outcome = str(e.get("outcome", ""))
+        role = look.OK if outcome == "verified" else look.ERROR
+        rows.append(
+            [
+                str(e.get("ts", ""))[:19].replace("T", " "),
+                f"{e.get('channel', '')}",
+                f"{action} {TITLES[kind]}",
+                clean(str(e.get("id", ""))),
+                f"{before or '-'} → {after or '-'}",
+                look.fg(role, outcome),
+            ]
+        )
+    head = ["when", "via", "what", "entry", "change", "outcome"]
+    lines = look.table(head, rows, max_col=48) if rows else none_row("no writes recorded")
+    lines.append(look.fg(look.DIM, f"log with full backups: {audit.path()}"))
+    return look.frame("history", lines)
+
+
+def cmd_history(r: Router, a: argparse.Namespace) -> str:
+    events = audit.recent(a.n)
+    return dump(events) if a.json else render_history(events)
 
 
 def cmd_policy(r: Router, a: argparse.Namespace) -> str:
@@ -592,6 +632,10 @@ def parser() -> argparse.ArgumentParser:
     )
     s.set_defaults(fn=cmd_logout)
 
+    s = sub.add_parser("history", parents=[common], help="recent writes from the audit log")
+    s.add_argument("-n", type=int, default=20, help="how many (default 20)")
+    s.set_defaults(fn=cmd_history)
+
     s = sub.add_parser("policy", parents=[common], help="what this machine allows rutern to do")
     s.set_defaults(fn=cmd_policy, action=None)
     psub = s.add_subparsers(dest="action", metavar="action")
@@ -626,7 +670,7 @@ def main(
                 f"{TITLES[kind]} writes are off. To allow them, add {kind!r} to cli_writes "
                 f"in {policy.path()} (`rutern policy init` writes one)"
             )
-        r = router() if router else Router(writes=a.policy.cli_writes)
+        r = router() if router else Router(writes=a.policy.cli_writes, channel="cli")
         out = a.fn(r, a)
     except RuternError as e:
         print(look.error(str(e)), file=sys.stderr)

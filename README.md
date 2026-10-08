@@ -54,6 +54,7 @@ uv run rutern firewall
 uv run rutern host alias set <mac> <name> | clear <mac>
 uv run rutern login | logout         # logout also clears the failed-login guard
 uv run rutern policy [init]          # what this machine allows; init writes a read-only file to edit
+uv run rutern history [-n N]         # recent writes; the log keeps a full backup of each list
 ```
 
 rutern is read-only until you allow writes in `~/.config/rutern/policy.toml` (`cli_writes`, `mcp_writes`). Every command takes `--json`. Writes show a before/after diff, ask y/N, take `--dry-run` and `--yes`, and verify by reading back. Opening a port and `--show-secrets` only work for a person at an interactive terminal. Install globally with `uv tool install --editable .`.

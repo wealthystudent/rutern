@@ -236,7 +236,7 @@ def build(
             with lock:
                 if refusal():
                     raise WriteRefused(refusal() or "")
-                r().apply(c)
+                r().apply(c, by=approved_by)
                 count["written"] += 1
         except Exception as e:
             return _error(e)
@@ -332,7 +332,7 @@ def serve(pol: Policy, writes: frozenset[Kind] = frozenset()) -> None:
     writes = writes & pol.mcp_writes - {"forward"}
     build(
         writes=writes,
-        router=lambda: Router(writes=writes),
+        router=lambda: Router(writes=writes, channel="mcp"),
         max_writes=pol.mcp_max_writes,
         trust_agent=pol.mcp_trust_agent_confirm,
     ).run("stdio")

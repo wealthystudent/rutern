@@ -11,6 +11,7 @@ import pytest
 from mcp import Client, types
 from mcp.client.session import ClientRequestContext, ElicitationFnT
 
+from rutern import audit
 from rutern.mcp_server import HIDDEN, build
 from tests.fakes import MCP_WRITES, FakeCloud, make_router
 
@@ -139,6 +140,8 @@ def test_user_approval_applies(tmp_path: Path, mode: str) -> None:
     assert out["data"]["written"] is True and out["data"]["approved_by"] == "user"
     assert len(cloud.posts) == 1 and len(asked) == 1
     assert KNOWN in asked[0] and "after: Den" in asked[0] and "AI agent" in asked[0]
+    (event,) = audit.recent()
+    assert event["by"] == "user" and event["outcome"] == "verified"
 
 
 def test_dry_run_asks_nobody(tmp_path: Path) -> None:

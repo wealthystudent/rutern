@@ -45,9 +45,11 @@ class Router:
         local: LocalClient | None = None,
         cloud: CloudClient | None = None,
         writes: frozenset[Kind] = frozenset(),
+        channel: str = "library",
     ):
         self.config = config or Config()
         self.writes = writes
+        self.channel = channel
         self._local = local
         self._cloud = cloud
 
@@ -226,9 +228,10 @@ class Router:
             kind="forward", id=name, label=name, before=before, after=after, warnings=warnings
         )
 
-    def apply(self, change: Change) -> Change:
+    def apply(self, change: Change, by: str = "") -> Change:
+        """Write one planned change. `by` says who approved it, for the audit log."""
         if change.kind not in self.writes:
             raise WriteRefused(f"{change.kind} writes are not enabled for this session")
         if not change.noop:
-            writes.apply(self.cloud, change)
+            writes.apply(self.cloud, change, channel=self.channel, by=by)
         return change

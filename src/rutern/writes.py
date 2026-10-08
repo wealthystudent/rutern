@@ -24,6 +24,7 @@ from typing import Any, Literal
 
 from pydantic import Field
 
+from rutern import audit
 from rutern.cloud import CloudClient
 from rutern.errors import ApiError, WriteRefused
 from rutern.models import Model, Text, clean, normalise_mac
@@ -173,8 +174,9 @@ def _bag(items: list[dict[str, Any]]) -> list[str]:
     return sorted(json.dumps(x, sort_keys=True) for x in items)
 
 
-def apply(cloud: CloudClient, change: Change) -> None:
-    """Write the full list with one entry changed, then verify by read-back."""
+def apply(cloud: CloudClient, change: Change, *, channel: str = "library", by: str = "") -> None:
+    """Write the full list with one entry changed, then verify by read-back.
+    The audit log gets the intent (with the list as it was) first, then the outcome."""
     spec = LISTS[change.kind]
     items = saved(cloud, change.kind)
     ids = _ids(spec, items)
@@ -189,8 +191,34 @@ def apply(cloud: CloudClient, change: Change) -> None:
         new = [change.after if i == change.id else x for x, i in zip(items, ids, strict=True)]
     else:
         new = [*items, change.after]
-    cloud.post(spec.endpoint, {spec.body_key: new})
+    write_id = audit.intent(
+        {
+            "channel": channel,
+            "by": by,
+            "kind": change.kind,
+            "id": change.id,
+            "endpoint": spec.endpoint,
+            "before": change.before,
+            "after": change.after,
+            "list_before": items,
+        }
+    )
+    try:
+        cloud.post(spec.endpoint, {spec.body_key: new})
+        _verify(cloud, spec, change, items, ids)
+    except Exception as e:
+        audit.outcome(write_id, f"failed: {type(e).__name__}: {e}")
+        raise
+    audit.outcome(write_id, "verified")
 
+
+def _verify(
+    cloud: CloudClient,
+    spec: ListSpec,
+    change: Change,
+    items: list[dict[str, Any]],
+    ids: list[str],
+) -> None:
     back = _read(cloud, spec)
     back_ids = _ids(spec, back)
     got = [x for x, i in zip(back, back_ids, strict=True) if i == change.id]
