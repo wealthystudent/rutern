@@ -29,6 +29,7 @@ from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
 from rutern.errors import RuternError, WriteRefused
+from rutern.models import scrub
 from rutern.policy import Policy
 from rutern.router import Router
 from rutern.writes import Change, Kind, describe
@@ -208,7 +209,8 @@ def build(
             return planned.error
         c = planned.change
         assert c is not None
-        result: dict[str, Any] = {"change": c.model_dump(mode="json"), "written": False}
+        # before/after are saved-list values; clean them like any router string
+        result: dict[str, Any] = {"change": scrub(c.model_dump(mode="json")), "written": False}
         if c.noop or not confirm:
             return _wrap(result)
         if refusal():
@@ -236,8 +238,8 @@ def build(
             with lock:
                 if refusal():
                     raise WriteRefused(refusal() or "")
+                count["written"] += 1  # counted before sending: a failed check still spent it
                 r().apply(c, by=approved_by)
-                count["written"] += 1
         except Exception as e:
             return _error(e)
         return _wrap({**result, "written": True, "verified": True, "approved_by": approved_by})

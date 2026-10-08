@@ -1,7 +1,8 @@
 """The owner's ceiling on what rutern may do.
 
-The file is `$XDG_CONFIG_HOME/rutern/policy.toml` (default `~/.config`). With no
-file rutern is read-only everywhere. Flags and env vars can only narrow what
+The file is `~/.config/rutern/policy.toml`, with `~` taken from the password
+database, never from env (see config.home). With no file rutern is read-only
+everywhere. Flags and env vars can only narrow what
 the file allows, never widen it: `rutern mcp --allow-writes` still needs the
 kind listed under `mcp_writes`, and RUTERN_READ_ONLY=1 turns every write off.
 
@@ -18,6 +19,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from rutern import config
 from rutern.config import write_private
 from rutern.errors import ConfigError
 from rutern.writes import KINDS, Kind
@@ -72,8 +74,7 @@ class Policy:
 
 
 def path() -> Path:
-    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
-    return Path(base) / "rutern" / "policy.toml"
+    return config.home() / ".config" / "rutern" / "policy.toml"
 
 
 def read_only_env() -> bool:

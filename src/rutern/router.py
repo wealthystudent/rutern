@@ -145,16 +145,8 @@ class Router:
         if ip is not None:
             lan, router = self._lan()
             ip = writes.lan_ip(ip, lan, router)
-            taken = [
-                x
-                for x in writes.saved(self.cloud, "lease")
-                if x.get("ip_address") == ip and writes.mac(str(x.get("mac"))) != mac
-            ]
-            if taken:
-                raise WriteRefused(f"{ip} is already reserved for another device")
-            busy = next((h for h in hosts if h.active and h.ipv4 == ip and h.mac != mac), None)
-            if busy:
-                raise WriteRefused(f"{ip} is in use right now by {busy.mac}")
+            writes.check_lease(writes.saved(self.cloud, "lease"), mac, ip)
+            self._check_in_use(hosts, mac, ip)
             after = {**(before or {"srcservice": ""}), "mac": mac, "ip_address": ip}
         elif before is None:
             raise WriteRefused(f"{mac} has no fixed IP")
@@ -228,10 +220,19 @@ class Router:
             kind="forward", id=name, label=name, before=before, after=after, warnings=warnings
         )
 
+    @staticmethod
+    def _check_in_use(hosts: list[Host], mac: str, ip: str) -> None:
+        busy = next((h for h in hosts if h.active and h.ipv4 == ip and h.mac != mac), None)
+        if busy:
+            raise WriteRefused(f"{ip} is in use right now by {busy.mac}")
+
     def apply(self, change: Change, by: str = "") -> Change:
-        """Write one planned change. `by` says who approved it, for the audit log."""
+        """Write one planned change. `by` says who approved it, for the audit log.
+        Checks that depend on other devices run again, since time passed since the plan."""
         if change.kind not in self.writes:
             raise WriteRefused(f"{change.kind} writes are not enabled for this session")
+        if change.kind == "lease" and change.after is not None and not change.noop:
+            self._check_in_use(self.cloud.hosts(), change.id, str(change.after["ip_address"]))
         if not change.noop:
             writes.apply(self.cloud, change, channel=self.channel, by=by)
         return change

@@ -24,6 +24,7 @@ from rutern.models import (
     Wifi,
     WifiNetwork,
     clean,
+    scrub,
 )
 from rutern.policy import Policy
 from rutern.router import Router, Status
@@ -389,15 +390,21 @@ def opens_ports(change: Change) -> bool:
     return change.kind == "forward" and change.after is not None
 
 
+def plan_json(change: Change) -> dict[str, Any]:
+    """The plan for --json; before/after are saved-list values, so they get cleaned."""
+    out: dict[str, Any] = scrub(change.model_dump(mode="json"))
+    return out
+
+
 def run_change(r: Router, a: argparse.Namespace, change: Change) -> str:
     """The shared write flow: show, dry run or confirm, write, verify.
     Opening a port always takes a person at a terminal typing the port."""
     shown = render_change(change)
     if change.noop:
-        return dump({"changed": False, **change.model_dump()}) if a.json else shown + "\nno change"
+        return dump({"changed": False, **plan_json(change)}) if a.json else shown + "\nno change"
     if a.dry_run:
         if a.json:
-            return dump({"dry_run": True, **change.model_dump()})
+            return dump({"dry_run": True, **plan_json(change)})
         return shown + "\ndry run, nothing written"
     if opens_ports(change) or not a.yes:
         print(shown, file=sys.stderr if a.json else sys.stdout)
@@ -419,7 +426,7 @@ def run_change(r: Router, a: argparse.Namespace, change: Change) -> str:
         raise WriteRefused("not confirmed; nothing written (pass --yes when not interactive)")
     r.apply(change, by=by)
     if a.json:
-        return dump({"changed": True, "verified": True, **change.model_dump()})
+        return dump({"changed": True, "verified": True, **plan_json(change)})
     shown_before = opens_ports(change) or not a.yes
     return ("" if shown_before else shown + "\n") + look.fg(
         look.OK, "written and verified by read-back"
@@ -463,8 +470,13 @@ def cmd_login(r: Router, a: argparse.Namespace) -> str:
 
 
 def cmd_logout(r: Router, a: argparse.Namespace) -> str:
-    r.cloud.logout()
-    return "session forgotten and login guard cleared"
+    # Clearing the guard re-enables logins; a loop of logout and login with a wrong
+    # password is how the router gets locked, so only a person may do it.
+    person = human_terminal()
+    r.cloud.logout(clear_guard=person)
+    if person:
+        return "session forgotten and login guard cleared"
+    return "session forgotten; the login guard only clears for a person at a terminal"
 
 
 def render_history(events: list[dict[str, Any]]) -> str:
@@ -498,7 +510,9 @@ def render_history(events: list[dict[str, Any]]) -> str:
 
 def cmd_history(r: Router, a: argparse.Namespace) -> str:
     events = audit.recent(a.n)
-    return dump(events) if a.json else render_history(events)
+    if a.json:
+        return dump([scrub(e, max_depth=6, max_items=100_000) for e in events])
+    return render_history(events)
 
 
 def cmd_policy(r: Router, a: argparse.Namespace) -> str:

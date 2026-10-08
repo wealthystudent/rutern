@@ -297,10 +297,11 @@ class CloudClient:
         self._pin.save(reference)
         self._store.save(cookie)
 
-    def logout(self) -> None:
-        """Forget the cached session and clear the login guard."""
+    def logout(self, clear_guard: bool = True) -> None:
+        """Forget the cached session and, unless told not to, clear the login guard."""
         self._store.clear()
-        self._guard.clear()
+        if clear_guard:
+            self._guard.clear()
         self._http.cookies.clear()
 
     def _ensure_session(self) -> bool:

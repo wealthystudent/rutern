@@ -34,7 +34,12 @@ from rutern.errors import ApiError
 REDACTED = "<redacted>"
 MAX_TEXT = 128
 MAX_ITEMS = 64
-_INVISIBLE = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]")
+# Invisible in every font yet not format characters: joiners and marks (CGJ,
+# variation selectors, Khmer and Mongolian ones), Hangul fillers, braille blank.
+_INVISIBLE = re.compile(
+    "[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff\u034f\u115f\u1160\u17b4\u17b5"
+    "\u180b-\u180f\u2800\u3164\ufe00-\ufe0f\uffa0\U000e0100-\U000e01ef]"
+)
 # Format (bidi, zero width, tags), lone surrogates (they crash UTF-8 output),
 # private use and unassigned code points: none of them belong in a name.
 _DROP = ("Cf", "Cs", "Co", "Cn")
@@ -52,18 +57,20 @@ def clean(value: str) -> str:
     return value[:MAX_TEXT]
 
 
-def scrub(value: Any, depth: int = 0) -> Any:
+def scrub(value: Any, depth: int = 0, *, max_depth: int = 3, max_items: int = MAX_ITEMS) -> Any:
     """Clean every string in a value of unknown shape, with nesting and size capped."""
     if isinstance(value, str):
         return clean(value)
     if value is None or isinstance(value, bool | int | float):
         return value
-    if depth >= 3:
+    if depth >= max_depth:
         return None
+    caps = {"max_depth": max_depth, "max_items": max_items}
     if isinstance(value, list):
-        return [scrub(v, depth + 1) for v in value[:MAX_ITEMS]]
+        return [scrub(v, depth + 1, **caps) for v in value[:max_items]]
     if isinstance(value, dict):
-        return {clean(str(k)): scrub(v, depth + 1) for k, v in list(value.items())[:MAX_ITEMS]}
+        items = list(value.items())[:max_items]
+        return {clean(str(k)): scrub(v, depth + 1, **caps) for k, v in items}
     return None
 
 
@@ -110,13 +117,13 @@ class WanStatus(Model):
 
 ROLES = {"0": "main", "1": "guest", "2": "iot", "3": "tv"}
 BANDS = {"2g": "2.4", "5g": "5", "6g": "6"}
-_VAP = re.compile(r"^vap(2g|5g|6g)\d+_(\d+)$")
+_VAP = re.compile(r"vap(2g|5g|6g)[0-9]+_([0-9]+)")
 
 
 class Vap(Model):
     """One local WiFi access point (band x role) and its associated stations."""
 
-    vap: str
+    vap: Text
     band: str
     role: str
     ssid: Text
@@ -126,7 +133,7 @@ class Vap(Model):
 def parse_vaps(wlanvap: dict[str, Any]) -> list[Vap]:
     out = []
     for name, data in sorted(wlanvap.items()):
-        m = _VAP.match(name)
+        m = _VAP.fullmatch(name)
         if not m or not isinstance(data, dict):
             continue
         stations = sorted(_macs(data.get("AssociatedDevice")))

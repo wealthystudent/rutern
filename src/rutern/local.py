@@ -59,7 +59,8 @@ class LocalClient:
             codes = [e.get("error") for e in errors if isinstance(e, dict)]
             if PERMISSION_DENIED in codes:
                 raise PermissionDenied(f"{service}.{method}: permission denied (error 13)")
-            raise ApiError(f"{service}.{method}: router error {codes}")
+            shown = [c for c in codes if isinstance(c, int) and not isinstance(c, bool)][:5]
+            raise ApiError(f"{service}.{method}: router error {shown or '(no code)'}")
         return env
 
     # reads

@@ -184,6 +184,8 @@ def apply(cloud: CloudClient, change: Change, *, channel: str = "library", by: s
     found = items[ids.index(change.id)] if change.id in ids else None
     if found != change.before:
         raise WriteRefused("the entry changed since the plan was made; plan again")
+    if change.kind == "lease" and change.after is not None:
+        check_lease(items, change.id, str(change.after["ip_address"]))
 
     if change.after is None:
         new = [x for x, i in zip(items, ids, strict=True) if i != change.id]
@@ -234,6 +236,13 @@ def _verify(
 
 
 # validation helpers
+
+
+def check_lease(items: list[dict[str, Any]], device: str, ip: str) -> None:
+    """No other device may hold a reservation for the same IP."""
+    for x in items:
+        if x.get("ip_address") == ip and _id(LISTS["lease"], x.get("mac")) != device:
+            raise WriteRefused(f"{ip} is already reserved for another device")
 
 
 def name(value: str, what: str = "name") -> str:

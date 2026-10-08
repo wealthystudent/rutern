@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import pwd
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,10 +33,16 @@ def discover_reference(html: str) -> str | None:
     return m.group(1) if m else None
 
 
+def home() -> Path:
+    """The account's home from the password database. HOME and the XDG_* variables
+    are ignored on purpose: whoever sets env for a command could otherwise point
+    rutern at their own policy, an empty login guard or a hidden audit log."""
+    return Path(pwd.getpwuid(os.getuid()).pw_dir)
+
+
 def state_dir() -> Path:
     """Per user state (login guard, pinned reference, audit log)."""
-    base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
-    return Path(base) / "rutern"
+    return home() / ".local" / "state" / "rutern"
 
 
 def write_private(path: Path, text: str, *, append: bool = False) -> None:

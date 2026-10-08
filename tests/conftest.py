@@ -16,8 +16,7 @@ def load(name: str) -> Any:
 @pytest.fixture(autouse=True)
 def _no_real_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep tests away from the real Keychain, state, policy and router."""
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setattr("rutern.config.home", lambda: tmp_path / "home")
     monkeypatch.setenv("RUTERN_REFERENCE", "12345678")
     for var in ("RUTERN_HOST", "RUTERN_READ_ONLY", "CLAUDECODE"):
         monkeypatch.delenv(var, raising=False)

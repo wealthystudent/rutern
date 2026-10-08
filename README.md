@@ -52,7 +52,7 @@ uv run rutern forwards               # port forwards and UPnP mappings
 uv run rutern forwards add <name> tcp|udp <wan-port> <lan-ip> [--lan-port N] | remove <name>
 uv run rutern firewall
 uv run rutern host alias set <mac> <name> | clear <mac>
-uv run rutern login | logout         # logout also clears the failed-login guard
+uv run rutern login | logout         # logout at a terminal also clears the failed-login guard
 uv run rutern policy [init]          # what this machine allows; init writes a read-only file to edit
 uv run rutern history [-n N]         # recent writes; the log keeps a full backup of each list
 ```
