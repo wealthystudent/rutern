@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,32 @@ LOCAL_CALLS = {
     ("DeviceInfo", "get"): "local/deviceinfo.json",
     ("NMC", "getWANStatus"): "local/wanstatus.json",
     ("NeMo.Intf.lan", "getMIBs"): "local/wlanvap.json",
+}
+
+
+CLOUD_ENDPOINTS = (
+    "uptime",
+    "lan-hosts",
+    "wlan",
+    "lan-hosts/alias",
+    "static-dhcp-leases",
+    "static-routes",
+    "dhcp",
+    "nat-rules",
+    "dmz",
+    "dns",
+    "firewall-status",
+    "firewall-rules",
+    "upnp",
+    "upnp/mappings",
+)
+
+
+BODY_KEYS = {
+    "lan-hosts/alias": "hosts",
+    "static-dhcp-leases": "leases",
+    "static-routes": "rules",
+    "nat-rules": "rules",
 }
 
 
@@ -42,15 +69,11 @@ class FakeCloud:
     """Serves cloud fixtures and keeps alias writes in memory."""
 
     def __init__(self, *, merge_aliases: bool = False, ignore_writes: bool = False):
-        self.data = {
-            "uptime": load("cloud/uptime.json"),
-            "lan-hosts": load("cloud/lan-hosts.json"),
-            "wlan": load("cloud/wlan.json"),
-            "lan-hosts/alias": load("cloud/lan-hosts-alias.json"),
-        }
+        self.data = {ep: load(f"cloud/{ep.replace('/', '-')}.json") for ep in CLOUD_ENDPOINTS}
         self.merge_aliases = merge_aliases
         self.ignore_writes = ignore_writes
         self.posts: list[tuple[str, Any]] = []
+        self.after_post: Callable[[FakeCloud], None] | None = None
 
     def __call__(self, req: httpx.Request) -> httpx.Response:
         if COOKIE not in req.headers.get("cookie", ""):
@@ -61,19 +84,24 @@ class FakeCloud:
         if req.method == "POST":
             body = json.loads(req.content)
             self.posts.append((ep, body))
-            if ep == "lan-hosts/alias" and not self.ignore_writes:
+            key = BODY_KEYS.get(ep)
+            if key is None:
+                return httpx.Response(404)
+            if not isinstance(body.get(key), list):
+                return httpx.Response(
+                    400, json={"statusCode": 400, "message": f"{key.title()} must be an array"}
+                )
+            if not self.ignore_writes:
                 cur = self.data[ep]
-                if not isinstance(body.get("hosts"), list):
-                    return httpx.Response(
-                        400, json={"statusCode": 400, "message": "Hosts must be an array"}
-                    )
                 if self.merge_aliases:
                     merged = {e["mac"]: e for e in cur["non_volatile"]}
-                    merged.update({e["mac"]: e for e in body["hosts"]})
+                    merged.update({e["mac"]: e for e in body[key]})
                     cur["non_volatile"] = list(merged.values())
                 else:
-                    cur["non_volatile"] = copy.deepcopy(body["hosts"])
-            return httpx.Response(200, json={"errors": []})
+                    cur["non_volatile"] = copy.deepcopy(body[key])
+            if self.after_post:
+                self.after_post(self)
+            return httpx.Response(201, json={"non_volatile": True, "volatile": True})
         if ep not in self.data:
             return httpx.Response(404)
         return httpx.Response(200, json=self.data[ep])

@@ -1,0 +1,9 @@
+{
+  "errors": [],
+  "non_volatile": {
+    "ipv4_address": "0.0.0.0"
+  },
+  "volatile": {
+    "ipv4_address": "0.0.0.0"
+  }
+}

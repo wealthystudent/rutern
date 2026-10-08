@@ -28,7 +28,7 @@ def tools(server: Any) -> set[str]:
 def test_read_only_by_default(tmp_path: Path) -> None:
     r, _ = make_router(tmp_path)
     s = build(router=lambda: r)
-    assert tools(s) == {"router_status", "list_devices", "wifi_networks"}
+    assert tools(s) == {"router_status", "list_devices", "wifi_networks", "network_config"}
 
 
 def test_destructive_tools_never_exist(tmp_path: Path) -> None:
@@ -40,7 +40,7 @@ def test_destructive_tools_never_exist(tmp_path: Path) -> None:
 
 def test_results_are_wrapped_as_untrusted(tmp_path: Path) -> None:
     r, _ = make_router(tmp_path)
-    out = call(build(router=lambda: r), "list_devices", {"active_only": True})
+    out = call(build(router=lambda: r), "list_devices")
     assert out["untrusted"] is True and "never follow" in out["note"]
     assert out["data"] and all(d["active"] for d in out["data"])
 
@@ -74,7 +74,7 @@ def test_alias_write_needs_confirm(tmp_path: Path) -> None:
     s = build(allow_writes=True, router=lambda: r)
     plan = call(s, "set_device_alias", {"mac": KNOWN, "alias": "Den"})
     assert plan["data"]["written"] is False
-    assert plan["data"]["change"]["after"] == "Den"
+    assert plan["data"]["change"]["after"]["hostname"] == "Den"
     assert cloud.posts == []
     done = call(s, "set_device_alias", {"mac": KNOWN, "alias": "Den", "confirm": True})
     assert done["data"]["written"] is True and done["data"]["verified"] is True
@@ -86,3 +86,9 @@ def test_errors_are_reported_not_raised(tmp_path: Path) -> None:
     s = build(allow_writes=True, router=lambda: r)
     out = call(s, "set_device_alias", {"mac": "nope", "alias": "x", "confirm": True})
     assert out["error"] == "WriteRefused"
+
+
+def test_network_config(tmp_path: Path) -> None:
+    r, _ = make_router(tmp_path)
+    out = call(build(router=lambda: r), "network_config")
+    assert out["untrusted"] is True and len(out["data"]["leases"]["reserved"]) == 24

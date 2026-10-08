@@ -9,7 +9,6 @@ login at all; a cached cookie that turns out stale costs one fresh login.
 
 from __future__ import annotations
 
-import os
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -25,15 +24,29 @@ from rutern.errors import (
     LoginBlocked,
     LoginFailed,
     Unreachable,
-    WriteRefused,
 )
-from rutern.models import AliasEntry, Host, Uptime, Wifi
+from rutern.models import (
+    AliasEntry,
+    Dhcp,
+    Dns,
+    Firewall,
+    FirewallRule,
+    Host,
+    Leases,
+    PortForward,
+    StaticLease,
+    StaticRoute,
+    Upnp,
+    UpnpMapping,
+    Uptime,
+    Wifi,
+    parse_dns,
+)
 
 COOKIE = "__Host-session"
 AUTH_FAILED_MESSAGE = "10000"
 GUARD_SECONDS = 15 * 60
 LOGIN_INTERVAL = 60.0
-UNVERIFIED_WRITES_ENV = "RUTERN_UNVERIFIED_WRITES"
 
 
 class LoginGuard:
@@ -280,22 +293,56 @@ class CloudClient:
             if a.alias
         ]
 
-    # writes
+    def leases(self) -> Leases:
+        data = self.get("static-dhcp-leases")
+        return Leases(
+            reserved=[StaticLease.model_validate(x) for x in _list(data, "non_volatile")],
+            active_reserved=[StaticLease.model_validate(x) for x in data.get("volatile") or []],
+            dynamic=[StaticLease.model_validate(x) for x in data.get("dynamic_leases") or []],
+        )
 
-    def set_aliases(self, entries: list[AliasEntry]) -> None:
-        """Replace the saved alias list. Callers send the full list, never a partial one.
+    def routes(self) -> list[StaticRoute]:
+        return [
+            StaticRoute.model_validate(x) for x in _list(self.get("static-routes"), "non_volatile")
+        ]
 
-        The router answers "Hosts must be an array" to a `non_volatile` body, so the
-        list goes under `hosts`. The item fields are mirrored from the GET and are
-        not verified live yet, hence the opt-in.
-        """
-        if os.environ.get(UNVERIFIED_WRITES_ENV) != "1":
-            raise WriteRefused(
-                "the alias write body is not verified against the live API yet; "
-                f"set {UNVERIFIED_WRITES_ENV}=1 to try it anyway"
-            )
-        body = {"hosts": [{"mac": e.mac, "hostname": e.alias} for e in entries]}
-        self.post("lan-hosts/alias", body)
+    def forwards(self) -> list[PortForward]:
+        return [PortForward.model_validate(x) for x in _list(self.get("nat-rules"), "non_volatile")]
+
+    def firewall(self) -> Firewall:
+        status = _dict(self.get("firewall-status"), "non_volatile")
+        rules = _list(self.get("firewall-rules"), "non_volatile")
+        return Firewall(
+            ipv4_enabled=bool(status.get("ipv4_enabled")),
+            ipv6_enabled=bool(status.get("ipv6_enabled")),
+            rules=[FirewallRule.model_validate(x) for x in rules],
+        )
+
+    def dhcp(self) -> Dhcp:
+        saved = _list(self.get("dhcp"), "non_volatile")
+        if not saved:
+            raise ApiError("dhcp: no saved config")
+        return Dhcp.model_validate(saved[0])
+
+    def dns(self) -> Dns:
+        return parse_dns(self.get("dns"))
+
+    def dmz(self) -> str | None:
+        """The DMZ host, or None when DMZ is off (0.0.0.0)."""
+        ip = str(_dict(self.get("dmz"), "non_volatile").get("ipv4_address") or "")
+        return None if ip in ("", "0.0.0.0") else ip
+
+    def upnp(self) -> Upnp:
+        enabled = bool(_dict(self.get("upnp"), "non_volatile").get("enabled"))
+        mappings = self.get("upnp/mappings").get("upnp_mappings") or [] if enabled else []
+        return Upnp(enabled=enabled, mappings=[UpnpMapping.model_validate(m) for m in mappings])
+
+
+def _dict(data: Any, key: str) -> dict[str, Any]:
+    value = data.get(key) if isinstance(data, dict) else None
+    if not isinstance(value, dict):
+        raise ApiError(f"response has no {key!r} object")
+    return value
 
 
 def _list(data: Any, key: str) -> list[Any]:

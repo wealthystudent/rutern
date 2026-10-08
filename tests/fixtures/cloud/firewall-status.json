@@ -1,0 +1,11 @@
+{
+  "errors": [],
+  "non_volatile": {
+    "ipv4_enabled": true,
+    "ipv6_enabled": true
+  },
+  "volatile": {
+    "ipv4_enabled": true,
+    "ipv6_enabled": true
+  }
+}

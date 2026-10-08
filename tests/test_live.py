@@ -28,3 +28,5 @@ def test_live_reads() -> None:
         assert wifi.non_volatile and all(n.encryption_key is not None for n in wifi.non_volatile)
         assert "<redacted>" in wifi.model_dump_json()
         assert r.uptime().os > 0
+        n = r.network()
+        assert n.dhcp.router_address and n.leases.reserved is not None

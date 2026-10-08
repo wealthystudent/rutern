@@ -10,10 +10,21 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from rutern import __version__, look
+from rutern import __version__, look, writes
 from rutern.errors import RuternError, WriteRefused
-from rutern.models import Host, Wifi, WifiNetwork
-from rutern.router import AliasChange, Router, Status
+from rutern.models import (
+    Firewall,
+    Host,
+    Leases,
+    Network,
+    PortForward,
+    StaticRoute,
+    Upnp,
+    Wifi,
+    WifiNetwork,
+)
+from rutern.router import Router, Status
+from rutern.writes import Change
 
 
 def duration(seconds: int | None) -> str:
@@ -36,6 +47,8 @@ def dump(data: Any, show_secrets: bool = False) -> str:
             return x.model_dump(mode="json", context={"show_secrets": show_secrets})
         if isinstance(x, list):
             return [conv(i) for i in x]
+        if isinstance(x, dict):
+            return {k: conv(v) for k, v in x.items()}
         return x
 
     return json.dumps(conv(data), indent=2, ensure_ascii=False)
@@ -110,7 +123,10 @@ def render_hosts(hosts: list[Host]) -> str:
         rows.append([dot, name, ip, h.mac, h.device_type or "-", link(h)])
     n_active = sum(h.active for h in hosts)
     lines = look.table(["", "name", "ipv4", "mac", "type", "link"], rows)
-    lines.append(look.fg(look.DIM, f"{n_active} active, {len(hosts)} total"))
+    summary = (
+        f"{n_active} active" if n_active == len(hosts) else f"{n_active} active, {len(hosts)} total"
+    )
+    lines.append(look.fg(look.DIM, summary))
     return look.frame("devices", lines)
 
 
@@ -143,19 +159,141 @@ def render_wifi(wifi: Wifi, live: bool, show_secrets: bool) -> str:
     return look.frame(heading, lines)
 
 
-def render_change(c: AliasChange) -> str:
-    before = c.before or look.fg(look.DIM, "(none)")
-    after = c.after or look.fg(look.DIM, "(none)")
+TITLES = {"alias": "alias", "lease": "fixed ip", "route": "static route", "forward": "port forward"}
+
+
+def render_change(c: Change) -> str:
+    before, after = writes.describe(c.kind, c.before), writes.describe(c.kind, c.after)
+    action = "add" if c.before is None else "remove" if c.after is None else "change"
+    what = f"{c.label}  {look.fg(look.DIM, c.id)}" if c.label != c.id else c.label
     return look.frame(
-        "alias change",
+        f"{action} {TITLES[c.kind]}",
         look.kv(
             [
-                ("device", f"{c.device}  {look.fg(look.DIM, c.mac)}"),
-                ("before", look.fg(look.ERROR, before) if c.before else before),
-                ("after", look.fg(look.OK, after) if c.after else after),
+                ("entry", what),
+                ("before", look.fg(look.ERROR, before) if before else look.fg(look.DIM, "(none)")),
+                ("after", look.fg(look.OK, after) if after else look.fg(look.DIM, "(none)")),
             ]
         ),
     )
+
+
+def on_off(on: bool) -> str:
+    return look.fg(look.OK, "on") if on else look.fg(look.DIM, "off")
+
+
+def none_row(text: str) -> list[str]:
+    return [look.fg(look.DIM, text)]
+
+
+def render_network(n: Network) -> str:
+    d = n.dhcp
+    lease = duration(d.lease_time)
+    pairs = [
+        ("lan", d.router_address),
+        ("dhcp", f"{on_off(d.enabled)}  {d.first_address} to {d.last_address}, lease {lease}"),
+        ("dns", f"{n.dns.profile}  " + look.fg(look.DIM, ", ".join(n.dns.v4_servers))),
+        (
+            "firewall",
+            f"ipv4 {on_off(n.firewall.ipv4_enabled)}  ipv6 {on_off(n.firewall.ipv6_enabled)}  "
+            f"{len(n.firewall.rules)} custom rule(s)",
+        ),
+        ("dmz", n.dmz or look.fg(look.DIM, "off")),
+        ("upnp", f"{on_off(n.upnp.enabled)}  {len(n.upnp.mappings)} mapping(s)"),
+        ("fixed ips", str(len(n.leases.reserved))),
+        ("routes", str(len(n.routes))),
+        ("forwards", str(len(n.forwards))),
+    ]
+    more = look.fg(look.DIM, "details: ") + look.hint(
+        ("leases", "fixed IPs"),
+        ("routes", "static routes"),
+        ("forwards", "ports"),
+        ("firewall", "rules"),
+    )
+    return look.frame("network", look.kv(pairs)) + "\n" + more
+
+
+def render_leases(leases: Leases, hosts: list[Host]) -> str:
+    by_mac = {h.mac: h for h in hosts}
+    rows = []
+    for lease in sorted(
+        leases.reserved, key=lambda x: tuple(int(p) for p in x.ip.split(".") if p.isdigit())
+    ):
+        h = by_mac.get(lease.mac)
+        online = h is not None and h.active
+        dot = look.fg(look.OK, "●") if online else look.fg(look.DIM, "○")
+        name = h.name if h else look.fg(look.DIM, "unknown device")
+        rows.append([dot, lease.ip, name, lease.mac])
+    lines = look.table(["", "ip", "device", "mac"], rows)
+    lines.append(
+        look.fg(look.DIM, f"{len(leases.reserved)} fixed IPs, {len(leases.dynamic)} dynamic leases")
+    )
+    return look.frame("fixed ips", lines)
+
+
+def render_routes(routes: list[StaticRoute]) -> str:
+    rows = [[r.name, r.destination, r.next_hop] for r in routes]
+    lines = (
+        look.table(["name", "destination", "next hop"], rows)
+        if rows
+        else none_row("no static routes")
+    )
+    return look.frame("static routes", lines)
+
+
+def ports(start: int, end: int) -> str:
+    return str(start) if start == end else f"{start}-{end}"
+
+
+def render_forwards(forwards: list[PortForward], upnp: Upnp) -> str:
+    rows = [
+        [f.name, f.protocol, str(f.wan_port or "-"), f.lan_ip, str(f.lan_port or "-")]
+        for f in forwards
+    ]
+    head = ["name", "proto", "wan port", "to ip", "port"]
+    out = [
+        look.frame(
+            "port forwards", look.table(head, rows) if rows else none_row("no port forwards")
+        )
+    ]
+    if upnp.enabled:
+        urows = [
+            [
+                m.name,
+                m.protocol,
+                ports(m.wan_port_start, m.wan_port_end),
+                m.lan_ip,
+                ports(m.lan_port_start, m.lan_port_end),
+            ]
+            for m in upnp.mappings
+        ]
+        lines = look.table(head, urows) if urows else none_row("no mappings")
+        out.append(look.frame("upnp (opened by devices)", lines))
+    else:
+        out.append(look.fg(look.DIM, "upnp off"))
+    return "\n".join(out)
+
+
+def render_firewall(fw: Firewall) -> str:
+    lines = look.kv([("ipv4", on_off(fw.ipv4_enabled)), ("ipv6", on_off(fw.ipv6_enabled))])
+    rows = [
+        [
+            r.name,
+            r.protocol,
+            str(r.ip_version or "-"),
+            r.src_ip_net or "any",
+            str(r.src_port or "any"),
+            r.dst_ip_net or "any",
+            str(r.dst_port or "any"),
+        ]
+        for r in fw.rules
+    ]
+    lines.append("")
+    if rows:
+        lines += look.table(["name", "proto", "ip", "from", "port", "to", "port"], rows)
+    else:
+        lines.append(look.fg(look.DIM, "no custom rules"))
+    return look.frame("firewall", lines)
 
 
 # commands
@@ -167,7 +305,7 @@ def cmd_status(r: Router, a: argparse.Namespace) -> str:
 
 
 def cmd_devices(r: Router, a: argparse.Namespace) -> str:
-    hosts = r.hosts(active_only=a.active)
+    hosts = r.hosts(active_only=not a.all)
     return dump(hosts) if a.json else render_hosts(hosts)
 
 
@@ -179,6 +317,35 @@ def cmd_wifi(r: Router, a: argparse.Namespace) -> str:
     return render_wifi(w, a.live, a.show_secrets)
 
 
+def cmd_network(r: Router, a: argparse.Namespace) -> str:
+    n = r.network()
+    return dump(n) if a.json else render_network(n)
+
+
+def cmd_leases(r: Router, a: argparse.Namespace) -> str:
+    leases = r.cloud.leases()
+    if a.json:
+        return dump(leases)
+    return render_leases(leases, r.hosts())
+
+
+def cmd_routes(r: Router, a: argparse.Namespace) -> str:
+    routes = r.cloud.routes()
+    return dump(routes) if a.json else render_routes(routes)
+
+
+def cmd_forwards(r: Router, a: argparse.Namespace) -> str:
+    forwards, upnp = r.cloud.forwards(), r.cloud.upnp()
+    if a.json:
+        return dump({"forwards": forwards, "upnp": upnp})
+    return render_forwards(forwards, upnp)
+
+
+def cmd_firewall(r: Router, a: argparse.Namespace) -> str:
+    fw = r.cloud.firewall()
+    return dump(fw) if a.json else render_firewall(fw)
+
+
 def confirm(prompt: str) -> bool:
     if not sys.stdin.isatty():
         return False
@@ -188,27 +355,46 @@ def confirm(prompt: str) -> bool:
         return False
 
 
-def cmd_alias(r: Router, a: argparse.Namespace) -> str:
-    alias = "" if a.alias_cmd == "clear" else a.name
-    change = r.plan_alias(a.mac, alias)
+def run_change(r: Router, a: argparse.Namespace, change: Change) -> str:
+    """The shared write flow: show, dry run or confirm, write, verify."""
     shown = render_change(change)
     if change.noop:
         return dump({"changed": False, **change.model_dump()}) if a.json else shown + "\nno change"
     if a.dry_run:
-        return (
-            dump({"dry_run": True, **change.model_dump()})
-            if a.json
-            else shown + "\ndry run, nothing written"
-        )
+        if a.json:
+            return dump({"dry_run": True, **change.model_dump()})
+        return shown + "\ndry run, nothing written"
+    if change.kind == "forward" and change.after and not a.json:
+        shown += "\n" + look.fg(look.KEY, "this opens a port on your public IP to the internet")
     if not a.yes:
         if not a.json:
             print(shown)
         if not confirm(f"apply? {look.fg(look.KEY, 'y')}/{look.fg(look.KEY, 'N')} "):
             raise WriteRefused("not confirmed; nothing written (pass --yes when not interactive)")
-    r.apply_alias(change)
+    r.apply(change)
     if a.json:
         return dump({"changed": True, "verified": True, **change.model_dump()})
     return (shown + "\n" if a.yes else "") + look.fg(look.OK, "written and verified by read-back")
+
+
+def cmd_alias(r: Router, a: argparse.Namespace) -> str:
+    return run_change(r, a, r.plan_alias(a.mac, "" if a.action == "clear" else a.name))
+
+
+def cmd_lease_write(r: Router, a: argparse.Namespace) -> str:
+    return run_change(r, a, r.plan_lease(a.mac, a.ip if a.action == "set" else None))
+
+
+def cmd_route_write(r: Router, a: argparse.Namespace) -> str:
+    if a.action == "remove":
+        return run_change(r, a, r.plan_route(a.name))
+    return run_change(r, a, r.plan_route(a.name, a.destination, a.next_hop))
+
+
+def cmd_forward_write(r: Router, a: argparse.Namespace) -> str:
+    if a.action == "remove":
+        return run_change(r, a, r.plan_forward(a.name))
+    return run_change(r, a, r.plan_forward(a.name, a.protocol, a.wan_port, a.lan_ip, a.lan_port))
 
 
 def cmd_login(r: Router, a: argparse.Namespace) -> str:
@@ -242,8 +428,8 @@ def parser() -> argparse.ArgumentParser:
     s = sub.add_parser("status", parents=[common], help="device, WAN and WiFi (local first)")
     s.set_defaults(fn=cmd_status)
 
-    s = sub.add_parser("devices", parents=[common], help="connected devices with names and IPs")
-    s.add_argument("--active", action="store_true", help="only devices online now")
+    s = sub.add_parser("devices", parents=[common], help="devices online now, with names and IPs")
+    s.add_argument("--all", action="store_true", help="include devices that are offline")
     s.set_defaults(fn=cmd_devices)
 
     s = sub.add_parser("wifi", parents=[common], help="WiFi networks (keys hidden)")
@@ -251,13 +437,60 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--show-secrets", action="store_true", help="reveal WiFi keys")
     s.set_defaults(fn=cmd_wifi)
 
-    host = sub.add_parser("host", help="change a device's settings")
-    hsub = host.add_subparsers(dest="host_cmd", required=True, metavar="setting")
-    alias = hsub.add_parser("alias", help="the name the router shows for a device")
-    asub = alias.add_subparsers(dest="alias_cmd", required=True, metavar="action")
     write = argparse.ArgumentParser(add_help=False, parents=[common])
     write.add_argument("--dry-run", action="store_true", help="show the change, write nothing")
     write.add_argument("--yes", action="store_true", help="apply without asking")
+
+    def section(name: str, fn: Callable[..., str], text: str) -> Any:
+        s = sub.add_parser(name, parents=[common], help=text)
+        s.set_defaults(fn=fn)
+        return s.add_subparsers(dest="action", metavar="action")
+
+    s = sub.add_parser(
+        "network", parents=[common], help="LAN, DHCP, DNS, firewall, DMZ and UPnP overview"
+    )
+    s.set_defaults(fn=cmd_network)
+
+    acts = section("leases", cmd_leases, "fixed IPs (DHCP reservations)")
+    s = acts.add_parser("set", parents=[write], help="give a device a fixed IP")
+    s.add_argument("mac")
+    s.add_argument("ip")
+    s.set_defaults(fn=cmd_lease_write)
+    s = acts.add_parser("remove", parents=[write], help="remove a device's fixed IP")
+    s.add_argument("mac")
+    s.set_defaults(fn=cmd_lease_write)
+
+    acts = section("routes", cmd_routes, "static routes")
+    s = acts.add_parser("add", parents=[write], help="add or replace a static route")
+    s.add_argument("name")
+    s.add_argument("destination", help="network, e.g. 10.1.0.0/24")
+    s.add_argument("next_hop", metavar="next-hop", help="LAN IP of the gateway, e.g. 10.0.0.42")
+    s.set_defaults(fn=cmd_route_write)
+    s = acts.add_parser("remove", parents=[write], help="remove a static route")
+    s.add_argument("name")
+    s.set_defaults(fn=cmd_route_write)
+
+    acts = section("forwards", cmd_forwards, "port forwards and UPnP mappings")
+    s = acts.add_parser("add", parents=[write], help="add or replace a port forward")
+    s.add_argument("name")
+    s.add_argument("protocol", choices=["tcp", "udp"])
+    s.add_argument(
+        "wan_port", metavar="wan-port", help="public port or range, e.g. 443 or 8000-8010"
+    )
+    s.add_argument("lan_ip", metavar="lan-ip")
+    s.add_argument("--lan-port", help="port on the device (default: same as wan-port)")
+    s.set_defaults(fn=cmd_forward_write)
+    s = acts.add_parser("remove", parents=[write], help="remove a port forward")
+    s.add_argument("name")
+    s.set_defaults(fn=cmd_forward_write)
+
+    s = sub.add_parser("firewall", parents=[common], help="firewall status and custom rules")
+    s.set_defaults(fn=cmd_firewall)
+
+    host = sub.add_parser("host", help="change a device's settings")
+    hsub = host.add_subparsers(dest="host_cmd", required=True, metavar="setting")
+    alias = hsub.add_parser("alias", help="the name the router shows for a device")
+    asub = alias.add_subparsers(dest="action", required=True, metavar="action")
     s = asub.add_parser("set", parents=[write], help="set an alias")
     s.add_argument("mac")
     s.add_argument("name")

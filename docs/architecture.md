@@ -31,11 +31,12 @@ src/rutern/
   errors.py       Unreachable, PermissionDenied, AuthRequired, LoginFailed, LoginBlocked, ApiError, WriteRefused
   models.py       Pydantic models; router strings cleaned, secrets redacted
   local.py        LocalClient: /ws transport + unauthenticated reads
-  cloud.py        CloudClient: login guard, session, /v1 reads and the alias write
-  router.py       Router facade, alias plan/apply with read-back
+  cloud.py        CloudClient: login guard, session, typed /v1 reads
+  router.py       Router facade; plan_* for aliases, fixed IPs, routes, port forwards; apply
+  writes.py       list edits: full-list POST, stale-plan check, read-back verification
   look.py         the shared tool look (palette, frame, table) for CLI output
   cli.py          `rutern` command line
-  mcp_server.py   MCP server on stdio (read tools; alias write behind --allow-writes)
+  mcp_server.py   MCP server on stdio (read tools; alias, fixed IP and route writes behind --allow-writes)
 scripts/record_fixtures.py   re-record scrubbed fixtures from the live router
 tests/
   fixtures/       recorded /ws and /v1 JSON, scrubbed; tests run offline

@@ -87,7 +87,18 @@ Note: `/v1/{ref}/status` does not exist (404). Use `/uptime` for status-like dat
 
 The portal never calls write endpoints from the browser: its pages post SvelteKit form actions (fields like `hostname_alias.<mac>`) and the portal server calls /v1. The frontend API client (`lanHostsAliasSet`, `wlanSet`, …) shows `POST /{ref}/<endpoint>` with a JSON body and an optional `x-tn-txn-id` header.
 
-- `POST /lan-hosts/alias`: a `{"non_volatile": [...]}` body gets HTTP 400 `"Hosts must be an array"` (NestJS style `{statusCode, message, timestamp, path}`) and changes nothing, so the list goes under `hosts`. rutern sends `{"hosts": [{mac, hostname}, ...]}`, the full saved list with one entry changed, and reads it back. **Item fields are mirrored from the GET and not verified live**, so the write needs `RUTERN_UNVERIFIED_WRITES=1`.
+Every list endpoint replaces the whole saved list. Success is HTTP 201 `{"non_volatile": true, "volatile": true}`; a bad body is HTTP 400 `{statusCode, message, timestamp, path}` and changes nothing. Validation reports one field at a time, with messages like `"Lan_ip must be an ip address"`.
+
+| Endpoint | Body | Item fields | Verified |
+|---|---|---|---|
+| `lan-hosts/alias` | `{"hosts": [...]}` | `mac`, `hostname` (the alias) | saved list written back unchanged |
+| `static-dhcp-leases` | `{"leases": [...]}` | `mac`, `ip_address`, `srcservice` (`""`) | saved list written back unchanged |
+| `static-routes` | `{"rules": [...]}` | `name`, `destination` (string), `next_hop` (IP); all required | validation messages only |
+| `nat-rules` | `{"rules": [...]}` | `name`, `protocol`, `lan_ip`, `wan_port_start` (0 to 65535) required; `wan_port_end`, `lan_port_start`, `lan_port_end` assumed from UPnP mappings | validation messages only |
+
+- MACs are lowercase in every list.
+- Port 0 passes validation, so a probe item with port 0 is a valid item that gets written.
+- `GET /lan` answers HTTP 501; use `/dhcp` for the LAN address (`ipv4_address`, e.g. `10.0.0.138/24`).
 - `POST /wlan`: shape unknown; not implemented.
 
 ### Endpoint surface

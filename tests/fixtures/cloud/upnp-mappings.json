@@ -1,0 +1,40 @@
+{
+  "upnp_mappings": [
+    {
+      "lan_ip": "10.0.0.62",
+      "lan_port_end": 41641,
+      "lan_port_start": 41641,
+      "name": "device-27",
+      "protocol": "udp",
+      "wan_port_end": 52757,
+      "wan_port_start": 52757
+    },
+    {
+      "lan_ip": "10.0.0.5",
+      "lan_port_end": 1935,
+      "lan_port_start": 1935,
+      "name": "device-28",
+      "protocol": "udp",
+      "wan_port_end": 34399,
+      "wan_port_start": 34399
+    },
+    {
+      "lan_ip": "10.0.0.62",
+      "lan_port_end": 41641,
+      "lan_port_start": 41641,
+      "name": "device-27",
+      "protocol": "udp",
+      "wan_port_end": 2486,
+      "wan_port_start": 2486
+    },
+    {
+      "lan_ip": "10.0.0.62",
+      "lan_port_end": 41641,
+      "lan_port_start": 41641,
+      "name": "device-27",
+      "protocol": "udp",
+      "wan_port_end": 33365,
+      "wan_port_start": 33365
+    }
+  ]
+}

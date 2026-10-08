@@ -1,0 +1,9 @@
+{
+  "errors": [],
+  "non_volatile": {
+    "enabled": true
+  },
+  "volatile": {
+    "enabled": true
+  }
+}

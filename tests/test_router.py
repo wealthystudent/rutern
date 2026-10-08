@@ -37,7 +37,8 @@ def test_hosts_sorted_active_first(tmp_path: Path) -> None:
 def test_plan_alias_is_read_only(tmp_path: Path) -> None:
     r, cloud = make_router(tmp_path)
     plan = r.plan_alias(KNOWN.upper(), "Living room TV")
-    assert plan.mac == KNOWN and plan.before == "" and plan.after == "Living room TV"
+    assert plan.id == KNOWN and plan.before is None
+    assert plan.after == {"mac": KNOWN, "hostname": "Living room TV"}
     assert cloud.posts == []
 
 
@@ -45,7 +46,7 @@ def test_plan_alias_is_read_only(tmp_path: Path) -> None:
 def test_apply_alias_sends_full_list_and_reads_back(tmp_path: Path, merge: bool) -> None:
     r, cloud = make_router(tmp_path, cloud=FakeCloud(merge_aliases=merge))
     before = {e["mac"]: e["hostname"] for e in cloud.data["lan-hosts/alias"]["non_volatile"]}
-    r.apply_alias(r.plan_alias(KNOWN, "Den"))
+    r.apply(r.plan_alias(KNOWN, "Den"))
     ep, body = cloud.posts[-1]
     assert ep == "lan-hosts/alias"
     sent = {e["mac"]: e["hostname"] for e in body["hosts"]}
@@ -56,15 +57,15 @@ def test_clear_alias(tmp_path: Path) -> None:
     r, cloud = make_router(tmp_path)
     target = cloud.data["lan-hosts/alias"]["non_volatile"][0]["mac"]
     plan = r.plan_alias(target, "")
-    assert plan.before and plan.after == ""
-    r.apply_alias(plan)
+    assert plan.before and plan.after is None
+    r.apply(plan)
     assert target not in {e["mac"] for e in cloud.posts[-1][1]["hosts"]}
 
 
 def test_write_without_effect_is_reported(tmp_path: Path) -> None:
     r, _ = make_router(tmp_path, cloud=FakeCloud(ignore_writes=True))
     with pytest.raises(ApiError, match="read-back"):
-        r.apply_alias(r.plan_alias(KNOWN, "Den"))
+        r.apply(r.plan_alias(KNOWN, "Den"))
 
 
 def test_stale_plan_is_refused(tmp_path: Path) -> None:
@@ -72,7 +73,7 @@ def test_stale_plan_is_refused(tmp_path: Path) -> None:
     plan = r.plan_alias(KNOWN, "Den")
     cloud.data["lan-hosts/alias"]["non_volatile"].append({"mac": KNOWN, "hostname": "Other"})
     with pytest.raises(WriteRefused, match="changed"):
-        r.apply_alias(plan)
+        r.apply(plan)
     assert cloud.posts == []
 
 
@@ -89,14 +90,4 @@ def test_plan_alias_refuses_bad_input(tmp_path: Path, mac: str, alias: str) -> N
     r, cloud = make_router(tmp_path)
     with pytest.raises(WriteRefused):
         r.plan_alias(mac, alias)
-    assert cloud.posts == []
-
-
-def test_alias_write_is_opt_in_until_verified(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv("RUTERN_UNVERIFIED_WRITES")
-    r, cloud = make_router(tmp_path)
-    with pytest.raises(WriteRefused, match="not verified"):
-        r.apply_alias(r.plan_alias(KNOWN, "Den"))
     assert cloud.posts == []

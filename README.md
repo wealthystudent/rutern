@@ -2,7 +2,7 @@
 
 Read and configure a Telenor home router (Zyxel EX5700, "WiFi Ruter II") from a CLI, and expose the same capability as an MCP server for an AI agent.
 
-Status: reads work end to end (CLI and MCP) against a real router. The alias write is built and tested offline but its live body is only partly verified, so it needs `RUTERN_UNVERIFIED_WRITES=1`. WiFi writes are not built.
+Status: reads work end to end (CLI and MCP) against a real router. Writes for aliases, fixed IPs, static routes and port forwards are built; alias and fixed IP bodies are verified live, route and port forward bodies come from the API's validation messages. WiFi writes are not built.
 
 ## Why it exists
 
@@ -38,14 +38,21 @@ security add-generic-password -s telenor-router -a telenor -w   # prompts for th
 
 ```
 uv run rutern status                 # device, WAN, WiFi; local, no login
-uv run rutern devices [--active]     # names, IPs, MACs, link (cloud)
+uv run rutern devices [--all]        # online devices: names, IPs, MACs, link (cloud); --all adds offline
 uv run rutern wifi [--live] [--show-secrets]
-uv run rutern host alias set <mac> <name> [--dry-run] [--yes]
-uv run rutern host alias clear <mac>
+uv run rutern network                # LAN, DHCP, DNS, firewall, DMZ, UPnP overview
+uv run rutern leases                 # fixed IPs with device names
+uv run rutern leases set <mac> <ip> | remove <mac>
+uv run rutern routes                 # static routes
+uv run rutern routes add <name> <destination> <next-hop> | remove <name>
+uv run rutern forwards               # port forwards and UPnP mappings
+uv run rutern forwards add <name> tcp|udp <wan-port> <lan-ip> [--lan-port N] | remove <name>
+uv run rutern firewall
+uv run rutern host alias set <mac> <name> | clear <mac>
 uv run rutern login | logout         # logout also clears the failed-login guard
 ```
 
-Every command takes `--json`. Install globally with `uv tool install .`.
+Every command takes `--json`. Writes show a before/after diff, ask y/N, take `--dry-run` and `--yes`, and verify by reading back. Install globally with `uv tool install --editable .`.
 
 MCP server (stdio), for example in Claude Code:
 
@@ -53,7 +60,7 @@ MCP server (stdio), for example in Claude Code:
 claude mcp add rutern -- uv --directory /path/to/rutern run rutern mcp
 ```
 
-Add `--allow-writes` after `mcp` to expose `set_device_alias`.
+Add `--allow-writes` after `mcp` to expose `set_device_alias`, `set_fixed_ip` and `set_static_route`. Port forwards are CLI only.
 
 ## Develop
 

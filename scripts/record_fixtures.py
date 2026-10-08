@@ -132,6 +132,24 @@ def leak_check(secrets: set[str]) -> None:
     print(f"leak check ok ({len(secrets)} secret values checked)")
 
 
+CLOUD_READS = (
+    "uptime",
+    "lan-hosts",
+    "wlan",
+    "lan-hosts/alias",
+    "static-dhcp-leases",
+    "static-routes",
+    "dhcp",
+    "nat-rules",
+    "dmz",
+    "dns",
+    "firewall-status",
+    "firewall-rules",
+    "upnp",
+    "upnp/mappings",
+)
+
+
 def record_local(sc: Scrubber) -> None:
     from rutern.local import LocalClient
 
@@ -158,7 +176,7 @@ def record_cloud(sc: Scrubber) -> None:
 
     c = CloudClient()
     try:
-        for ep in ("uptime", "lan-hosts", "wlan", "lan-hosts/alias"):
+        for ep in CLOUD_READS:
             name = ep.replace("/", "-") + ".json"
             try:
                 write(f"cloud/{name}", sc.walk(c.get(ep)))

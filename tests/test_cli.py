@@ -34,7 +34,9 @@ def test_status_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None
 
 def test_devices(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     code, out, _, _ = run(tmp_path, capsys, "devices")
-    assert code == 0 and "26 total" in out and "10.0.0." in out
+    assert code == 0 and "active" in out and "total" not in out and "○" not in out
+    code, out, _, _ = run(tmp_path, capsys, "devices", "--all")
+    assert code == 0 and "26 total" in out and "○" in out
 
 
 def test_wifi_hides_keys_by_default(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

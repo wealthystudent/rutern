@@ -207,3 +207,118 @@ class Wifi(Model):
 
     non_volatile: list[WifiNetwork]
     volatile: list[WifiNetwork]
+
+
+# Network configuration (cloud). Each endpoint returns `non_volatile` (saved)
+# and `volatile` (live); the saved side is what the portal edits.
+
+
+class Open(BaseModel):
+    """Items whose full field set is not known yet keep unknown fields as-is."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="allow", frozen=True)
+
+
+class StaticLease(Model):
+    """A fixed IP for a device (DHCP reservation)."""
+
+    mac: Text
+    ip: Text = Field(validation_alias=AliasChoices("ip_address", "ip"))
+
+    @field_validator("mac", mode="after")
+    @classmethod
+    def _mac(cls, v: str) -> str:
+        return normalise_mac(v)
+
+
+class Leases(Model):
+    reserved: list[StaticLease]
+    active_reserved: list[StaticLease] = Field(default_factory=list)
+    dynamic: list[StaticLease] = Field(default_factory=list)
+
+
+class StaticRoute(Open):
+    name: Text = ""
+    destination: Text = ""
+    next_hop: Text = ""
+
+
+class PortForward(Open):
+    name: Text = ""
+    protocol: Text = ""
+    lan_ip: Text = ""
+    lan_port: Text | int | None = None
+    wan_port: Text | int | None = None
+
+
+class FirewallRule(Open):
+    name: Text = ""
+    protocol: Text = ""
+    ip_version: Text | int | None = None
+    src_ip_net: Text = ""
+    src_port: Text | int | None = None
+    dst_ip_net: Text = ""
+    dst_port: Text | int | None = None
+
+
+class Firewall(Model):
+    ipv4_enabled: bool
+    ipv6_enabled: bool
+    rules: list[FirewallRule] = Field(default_factory=list)
+
+
+class Dhcp(Model):
+    enabled: bool
+    router_address: Text = Field(validation_alias=AliasChoices("ipv4_address", "router_address"))
+    first_address: Text
+    last_address: Text
+    lease_time: int
+
+
+class Dns(Model):
+    profile: str
+    v4_servers: list[Text]
+    v6_servers: list[Text] = Field(default_factory=list)
+
+
+DNS_PROFILES = ("telenor", "nettvern", "nettvern_plus")
+
+
+def parse_dns(data: dict[str, Any]) -> Dns:
+    saved = data.get("non_volatile") or {}
+    meta = data.get("meta") or {}
+    v4 = [str(s) for s in saved.get("v4_servers") or []]
+    profile = "custom"
+    for name in DNS_PROFILES:
+        if v4 and sorted(v4) == sorted(meta.get(f"v4_{name}_servers") or []):
+            profile = name
+            break
+    return Dns(profile=profile, v4_servers=v4, v6_servers=saved.get("v6_servers") or [])
+
+
+class UpnpMapping(Model):
+    name: Text = ""
+    protocol: Text = ""
+    lan_ip: Text = ""
+    lan_port_start: int = 0
+    lan_port_end: int = 0
+    wan_port_start: int = 0
+    wan_port_end: int = 0
+
+
+class Upnp(Model):
+    enabled: bool
+    mappings: list[UpnpMapping] = Field(default_factory=list)
+
+
+class Network(Model):
+    """The router's LAN-side configuration in one read."""
+
+    dhcp: Dhcp
+    dns: Dns
+    firewall: Firewall
+    dmz: Text | None
+    upnp: Upnp
+    leases: Leases
+    routes: list[StaticRoute]
+    forwards: list[PortForward]

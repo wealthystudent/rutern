@@ -69,7 +69,7 @@
       "mac": "02:00:00:00:00:03"
     },
     {
-      "active": true,
+      "active": false,
       "hostname": "device-21",
       "mac": "02:00:00:00:00:14"
     },

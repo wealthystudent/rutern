@@ -18,7 +18,6 @@ def _no_real_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep tests away from the real Keychain, state dir and router."""
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("RUTERN_REFERENCE", "12345678")
-    monkeypatch.setenv("RUTERN_UNVERIFIED_WRITES", "1")
 
     def no_keychain(*_: Any, **__: Any) -> None:
         raise AssertionError("tests must not touch the Keychain")
