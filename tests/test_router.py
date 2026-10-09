@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import httpx
 import pytest
 
+from rutern.config import Config
 from rutern.errors import ApiError, WriteRefused
+from rutern.local import LocalClient
 from tests.fakes import FakeCloud, make_router
 
 KNOWN = "02:00:00:00:00:11"  # a host with no alias in the fixture
@@ -91,3 +94,12 @@ def test_plan_alias_refuses_bad_input(tmp_path: Path, mac: str, alias: str) -> N
     with pytest.raises(WriteRefused):
         r.plan_alias(mac, alias)
     assert cloud.posts == []
+
+
+@pytest.mark.parametrize("status", [404, 401])
+def test_status_falls_back_when_something_else_answers(tmp_path: Path, status: int) -> None:
+    r, _ = make_router(tmp_path)
+    r._local = LocalClient(
+        Config(), transport=httpx.MockTransport(lambda req: httpx.Response(status))
+    )
+    assert r.status().source == "cloud"

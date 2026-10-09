@@ -347,16 +347,25 @@ class Dns(Model):
 DNS_PROFILES = ("telenor", "nettvern", "nettvern_plus")
 
 
-def parse_dns(data: dict[str, Any]) -> Dns:
-    saved = data.get("non_volatile") or {}
-    meta = data.get("meta") or {}
-    v4 = [str(s) for s in saved.get("v4_servers") or []]
+def parse_dns(data: Any) -> Dns:
+    """The saved DNS servers, named after the Telenor profile they match, if any."""
+    saved = data.get("non_volatile") if isinstance(data, dict) else None
+    if not isinstance(saved, dict):
+        raise ApiError("dns: response has no saved config")
+    meta = data.get("meta")
+    meta = meta if isinstance(meta, dict) else {}
+
+    def servers(value: Any) -> list[str]:
+        return [str(s) for s in value] if isinstance(value, list) else []
+
+    v4 = servers(saved.get("v4_servers"))
     profile = "custom"
     for name in DNS_PROFILES:
-        if v4 and sorted(v4) == sorted(meta.get(f"v4_{name}_servers") or []):
+        if v4 and sorted(v4) == sorted(servers(meta.get(f"v4_{name}_servers"))):
             profile = name
             break
-    return Dns(profile=profile, v4_servers=v4, v6_servers=saved.get("v6_servers") or [])
+    out = {"profile": profile, "v4_servers": v4, "v6_servers": servers(saved.get("v6_servers"))}
+    return parse(Dns, out, "dns")
 
 
 class UpnpMapping(Model):

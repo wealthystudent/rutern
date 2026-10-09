@@ -2,15 +2,30 @@
 
 The local API is plain HTTP on the LAN, so anyone able to intercept it could
 answer with an endless body; the cloud gets the same cap.
+
+Clients ignore the environment (proxies, CA bundles, key logs): whoever sets
+env for a command could otherwise route the password through a proxy that
+can read it.
 """
 
 from __future__ import annotations
 
+import ssl
+
+import certifi
 import httpx
 
 from rutern.errors import ApiError
 
 MAX_BODY = 2 * 1024 * 1024
+
+
+def tls_context() -> ssl.SSLContext:
+    """Certificates checked against certifi's roots. SSL_CERT_FILE and SSL_CERT_DIR
+    cannot swap in another CA, and SSLKEYLOGFILE cannot record the session keys."""
+    ctx = ssl.create_default_context(cafile=certifi.where())
+    ctx.keylog_filename = None  # type: ignore[assignment]
+    return ctx
 
 
 def send(client: httpx.Client, request: httpx.Request) -> httpx.Response:

@@ -74,3 +74,10 @@ def test_history_skips_damaged_lines() -> None:
     audit.path().parent.mkdir(parents=True, exist_ok=True)
     audit.path().write_text('not json\n{"event": "write", "write_id": 5}\n[]\n')
     assert audit.recent() == []
+
+
+@pytest.mark.parametrize("n", ["0", "-3", "x"])
+def test_history_needs_a_positive_count(n: str, capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as e:
+        main(["history", "-n", n])
+    assert e.value.code == 2 and "-n" in capsys.readouterr().err

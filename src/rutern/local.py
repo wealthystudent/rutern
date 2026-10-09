@@ -26,7 +26,10 @@ class LocalClient:
     def __init__(self, config: Config | None = None, transport: httpx.BaseTransport | None = None):
         self.config = config or Config()
         self._http = httpx.Client(
-            base_url=self.config.local_url, timeout=self.config.timeout, transport=transport
+            base_url=self.config.local_url,
+            timeout=self.config.timeout,
+            transport=transport,
+            trust_env=False,  # no proxy may answer for the router
         )
 
     def close(self) -> None:

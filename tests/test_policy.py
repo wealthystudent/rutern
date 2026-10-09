@@ -176,8 +176,13 @@ def test_agent_shell_is_not_a_human_terminal(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setattr("sys.stdin", Tty())
     assert cli.human_terminal()
-    monkeypatch.setenv("CLAUDECODE", "1")
-    assert not cli.human_terminal()
+    for var in cli.AGENT_ENV:
+        monkeypatch.setenv(var, "0")
+    assert cli.human_terminal()  # explicitly off
+    for var, value in (("CLAUDECODE", "1"), ("AI_AGENT", "claude-code"), ("GEMINI_CLI", "1")):
+        monkeypatch.setenv(var, value)
+        assert not cli.human_terminal()
+        monkeypatch.setenv(var, "")
 
 
 FORWARD = ["forwards", "add", "web", "tcp", "8443", "10.0.0.5"]
@@ -234,3 +239,35 @@ def test_parse_kinds() -> None:
     assert parse_kinds(" alias , lease") == {"alias", "lease"}
     with pytest.raises(ConfigError):
         parse_kinds("alias,reboot")
+
+
+@pytest.mark.parametrize(
+    "argv", [["host", "alias", "set", KNOWN, "Den"], ["forwards", "remove", "web"]]
+)
+def test_agent_shell_cannot_write_with_yes(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    argv: list[str],
+) -> None:
+    r, cloud = make_router(tmp_path)
+    r.apply(r.plan_forward("web", "tcp", "8443", "10.0.0.5"))
+    cloud.posts.clear()
+    monkeypatch.setenv("CLAUDECODE", "1")
+    assert main([*argv, "--yes"], router=lambda: r, pol=WRITABLE) == 1
+    assert "rutern mcp" in capsys.readouterr().err and cloud.posts == []
+    r, _ = make_router(tmp_path, cloud=cloud)
+    assert main([*argv, "--dry-run"], router=lambda: r, pol=WRITABLE) == 0
+
+
+def test_allow_writes_all_is_quiet(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    served: list[Any] = []
+    monkeypatch.setattr("rutern.mcp_server.serve", lambda pol, kinds: served.append(kinds))
+    assert main(["mcp", "--allow-writes"], pol=Policy(mcp_writes=frozenset({"lease"}))) == 0
+    assert served == [{"lease"}] and capsys.readouterr().err == ""
+    assert main(["mcp", "--allow-writes", "forward"], pol=Policy()) == 0
+    assert "does not allow forward" in capsys.readouterr().err
+    assert main(["mcp", "--allow-writes"], pol=Policy()) == 0
+    assert "mcp_writes" in capsys.readouterr().err

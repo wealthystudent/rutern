@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import ipaddress
 import json
-import os
 import re
 import sys
 from pathlib import Path
@@ -181,16 +180,6 @@ def record_cloud(sc: Scrubber) -> None:
                 write(f"cloud/{name}", sc.walk(c.get(ep)))
             except ApiError as e:
                 print(f"{ep}: {e}")
-        spec_out = os.environ.get("RUTERN_SPEC_OUT")
-        if spec_out:
-            for path in ("/v1/openapi.json", "/mitt-wifi/v1/openapi.json", "/v1/swagger.json"):
-                r = c._http.get(path)
-                print(f"{path}: HTTP {r.status_code}")
-                if r.status_code == 200 and r.headers.get("content-type", "").startswith(
-                    "application/json"
-                ):
-                    Path(spec_out).write_text(r.text)
-                    break
     finally:
         c.close()
 

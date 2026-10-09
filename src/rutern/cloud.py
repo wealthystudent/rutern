@@ -13,6 +13,7 @@ even by mistake.
 
 from __future__ import annotations
 
+import contextlib
 import math
 import time
 from collections.abc import Callable
@@ -87,8 +88,11 @@ GUARD_HINT = "Check the Keychain password, then run `rutern logout` to clear thi
 
 
 class LoginGuard:
-    """A file that records a rejected login so later runs do not retry it.
-    A guard file that cannot be read blocks too: when in doubt, do not log in."""
+    """A file that blocks logins for a while after one that may have failed.
+    It is written before each attempt goes out and cleared once the attempt
+    succeeds or never reached the portal, so a login cut off by a crash or
+    Ctrl-C still counts. A guard file that cannot be read or written blocks
+    too: when in doubt, do not log in."""
 
     def __init__(self, path: Path | None = None, clock: Callable[[], float] = time.time):
         self.path = path or state_dir() / "login-failed"
@@ -110,12 +114,17 @@ class LoginGuard:
         left = GUARD_SECONDS - (self.clock() - failed_at)
         if left > 0:
             raise LoginBlocked(
-                f"last login was rejected; not retrying for {int(left // 60) + 1} min "
-                f"to avoid locking the router. {GUARD_HINT}"
+                f"the last login was rejected or cut off; not retrying for "
+                f"{int(left // 60) + 1} min to avoid locking the router. {GUARD_HINT}"
             )
 
-    def record_failure(self) -> None:
-        write_private(self.path, f"{self.clock()}\n")
+    def record_attempt(self) -> None:
+        try:
+            write_private(self.path, f"{self.clock()}\n")
+        except OSError:
+            raise LoginBlocked(
+                f"cannot write the login guard at {self.path}; not logging in"
+            ) from None
 
     def clear(self) -> None:
         self.path.unlink(missing_ok=True)
@@ -179,6 +188,8 @@ class CloudClient:
             transport=transport,
             follow_redirects=False,
             headers={"Accept": "application/json"},
+            trust_env=False,
+            verify=net.tls_context(),
         )
         self._clock = clock
         self._login_failed = False
@@ -254,12 +265,13 @@ class CloudClient:
 
     def login(self) -> None:
         """One login attempt. A failure is never retried in this process, and
-        successful logins are at least LOGIN_INTERVAL apart."""
+        attempts are at least LOGIN_INTERVAL apart, counting from before the
+        Keychain read so a refused prompt is not asked again right away."""
         if self._login_failed:
             raise AuthRequired("login already failed in this run; not retrying")
         now = self._clock()
         if self._last_login is not None and now - self._last_login < LOGIN_INTERVAL:
-            raise AuthRequired("logged in moments ago and the session is still refused")
+            raise AuthRequired("a login was tried less than a minute ago; try again later")
         self._guard.check()
         reference = self.reference
         self._last_login = now
@@ -271,16 +283,17 @@ class CloudClient:
         }
         headers = {"Origin": CLOUD_BASE, "x-sveltekit-action": "true"}
         req = self._http.build_request("POST", "/login/admin?/login", files=files, headers=headers)
+        self._guard.record_attempt()  # counts as failed until the answer says otherwise
         try:
             r = net.send(self._http, req)
         except (httpx.ConnectError, httpx.ConnectTimeout) as e:
-            # Never reached the portal, so it cannot count as an attempt.
-            self._login_failed = True
+            # Never reached the portal, so it is no attempt; LOGIN_INTERVAL spaces the next.
+            with contextlib.suppress(OSError):
+                self._guard.clear()
             raise Unreachable("wifi.telenor.no did not answer the login") from e
         except (httpx.HTTPError, ApiError) as e:
-            # The password may have arrived; count it like a rejection.
+            # The password may have arrived; the guard stays, like after a rejection.
             self._login_failed = True
-            self._guard.record_failure()
             raise Unreachable("the login broke off midway; not retrying for a while") from e
         ok = False
         if r.status_code == 200:
@@ -291,9 +304,9 @@ class CloudClient:
         cookie = self._cookie()
         if not ok or not cookie:
             self._login_failed = True
-            self._guard.record_failure()
             raise LoginFailed(f"login rejected (HTTP {r.status_code}); not retrying")
-        self._guard.clear()
+        with contextlib.suppress(OSError):
+            self._guard.clear()
         self._pin.save(reference)
         self._store.save(cookie)
 

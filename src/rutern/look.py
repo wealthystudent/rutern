@@ -1,8 +1,6 @@
-"""The shared tool look for plain (non interactive) CLI output.
-
-Ported from fuzzyrepo/internal/look (Go): the palette roles on the
-terminal's ANSI colours, and rounded frames with the title on the top
-border. Colour is off when stdout is not a terminal or NO_COLOR is set.
+"""The look of CLI output: palette roles on the terminal's ANSI colours, and
+rounded frames with the title on the top border. Colour is off when stdout
+is not a terminal or NO_COLOR is set.
 """
 
 from __future__ import annotations

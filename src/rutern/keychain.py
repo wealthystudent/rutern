@@ -10,20 +10,27 @@ from __future__ import annotations
 import contextlib
 import subprocess
 
-from rutern.errors import AuthRequired
+from rutern.errors import AuthRequired, ConfigError
 
 # By absolute path, so a `security` planted earlier in PATH never sees the session.
 SECURITY = "/usr/bin/security"
 SERVICE = "telenor-router"
 ACCOUNT = "telenor"
 SESSION_SERVICE = "telenor-router-session"
-
+ADD_COMMAND = f'security add-generic-password -s {SERVICE} -a {ACCOUNT} -T "" -w'
+NOT_FOUND = 44  # `security` exit status when no such item exists
 
 # Long enough to answer the macOS prompt when the item trusts no app (see README).
 PROMPT_TIMEOUT = 120
 
 
+class _Refused(Exception):
+    """The item may exist, but Keychain did not hand it over."""
+
+
 def _find(service: str, timeout: float = 10) -> str | None:
+    """The item's secret, or None when there is no such item. Raises _Refused
+    when the prompt is denied or not answered in time."""
     try:
         out = subprocess.run(
             [SECURITY, "find-generic-password", "-s", service, "-a", ACCOUNT, "-w"],
@@ -32,26 +39,39 @@ def _find(service: str, timeout: float = 10) -> str | None:
             check=False,
             timeout=timeout,
         )
+    except FileNotFoundError:
+        raise ConfigError(
+            "rutern keeps the admin password in the macOS Keychain, so it needs macOS"
+        ) from None
     except (OSError, subprocess.TimeoutExpired):
+        raise _Refused from None
+    if out.returncode == NOT_FOUND:
         return None
     if out.returncode != 0:
-        return None
+        raise _Refused
     value = out.stdout.rstrip("\n")
     return value or None
 
 
 def admin_password() -> str:
     """The admin password from Keychain (service telenor-router, account telenor)."""
-    value = _find(SERVICE, timeout=PROMPT_TIMEOUT)
-    if value is None:
+    try:
+        value = _find(SERVICE, timeout=PROMPT_TIMEOUT)
+    except _Refused:
         raise AuthRequired(
-            f"no admin password in Keychain (service {SERVICE!r}, account {ACCOUNT!r})"
-        )
+            "Keychain did not hand over the admin password (the prompt was denied or not "
+            "answered in time)"
+        ) from None
+    if value is None:
+        raise AuthRequired(f"no admin password in Keychain; store it once with: {ADD_COMMAND}")
     return value
 
 
 def load_session() -> str | None:
-    return _find(SESSION_SERVICE)
+    try:
+        return _find(SESSION_SERVICE)
+    except _Refused:
+        return None
 
 
 def _quote(value: str) -> str:

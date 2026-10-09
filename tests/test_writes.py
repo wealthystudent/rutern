@@ -4,10 +4,11 @@ import asyncio
 import json
 from pathlib import Path
 
+import httpx
 import pytest
 
 from rutern.cli import main
-from rutern.errors import ApiError, WriteRefused
+from rutern.errors import ApiError, Unreachable, WriteRefused
 from rutern.mcp_server import build
 from tests.fakes import MCP_WRITES, WRITABLE, FakeCloud, make_router
 from tests.test_mcp import call
@@ -346,3 +347,54 @@ def test_plan_renders_saved_values_cleanly(
     code = main(["host", "alias", "set", KNOWN, "Den", "--dry-run"], router=lambda: r, pol=WRITABLE)
     out = capsys.readouterr().out
     assert code == 0 and "evil" in out and "\x1b]0" not in out and "\x07" not in out
+
+
+def test_write_without_an_answer_says_it_may_have_applied(tmp_path: Path) -> None:
+    cloud = FakeCloud()
+
+    def lost(_: FakeCloud) -> None:
+        raise httpx.ReadTimeout("the answer never came")
+
+    cloud.after_post = lost
+    r, _ = make_router(tmp_path, cloud=cloud)
+    plan = r.plan_alias(KNOWN, "Den")
+    with pytest.raises(Unreachable, match="may still have been saved"):
+        r.apply(plan)
+    assert r.plan_alias(KNOWN, "Den").noop  # planning again shows it did
+
+
+@pytest.mark.parametrize("target", ["dmz", "forward", "route"])
+def test_fixed_ip_that_traffic_points_at(tmp_path: Path, target: str) -> None:
+    cloud = FakeCloud()
+    if target == "dmz":
+        cloud.data["dmz"]["non_volatile"]["ipv4_address"] = FREE_IP
+    elif target == "forward":
+        cloud.data["nat-rules"]["non_volatile"] = [
+            {"name": "ssh", "protocol": "tcp", "lan_ip": FREE_IP, "wan_port_start": 22}
+        ]
+    else:
+        cloud.data["static-routes"]["non_volatile"] = [
+            {"name": "lab", "destination": "10.9.0.0/24", "next_hop": FREE_IP}
+        ]
+    r, _ = make_router(tmp_path, cloud=cloud)
+    (warning,) = r.plan_lease(KNOWN, FREE_IP).warnings
+    assert FREE_IP in warning and "which device receives" in warning
+    out = call(
+        build(writes=MCP_WRITES, router=lambda: r), "set_fixed_ip", {"mac": KNOWN, "ip": FREE_IP}
+    )
+    assert out["error"] == "WriteRefused" and "command line" in out["message"]
+    assert cloud.posts == []
+
+
+def test_removing_a_targeted_fixed_ip_is_refused_over_mcp(tmp_path: Path) -> None:
+    cloud = FakeCloud()
+    lease = cloud.data["static-dhcp-leases"]["non_volatile"][0]
+    cloud.data["dmz"]["non_volatile"]["ipv4_address"] = lease["ip_address"]
+    r, _ = make_router(tmp_path, cloud=cloud)
+    out = call(build(writes=MCP_WRITES, router=lambda: r), "set_fixed_ip", {"mac": lease["mac"]})
+    assert out["error"] == "WriteRefused" and "the DMZ points at" in out["message"]
+
+
+def test_untargeted_fixed_ip_has_no_warning(tmp_path: Path) -> None:
+    r, _ = make_router(tmp_path)
+    assert r.plan_lease(KNOWN, FREE_IP).warnings == []

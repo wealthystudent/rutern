@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import ssl
 from collections.abc import Callable
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from rutern.errors import (
     Unreachable,
     WriteRefused,
 )
+from rutern.local import LocalClient
 
 Handler = Callable[[httpx.Request], httpx.Response]
 PASSWORD = "hunter2-not-real"
@@ -135,7 +137,7 @@ def test_rejected_login_is_not_retried_and_sets_guard(tmp_path: Path) -> None:
 def test_guard_expires(tmp_path: Path) -> None:
     now = [1000.0]
     guard = LoginGuard(tmp_path / "g", clock=lambda: now[0])
-    guard.record_failure()
+    guard.record_attempt()
     with pytest.raises(LoginBlocked):
         guard.check()
     now[0] += 16 * 60
@@ -390,7 +392,7 @@ def test_damaged_guard_blocks_login(tmp_path: Path, content: str) -> None:
 
 def test_guard_file_is_private(tmp_path: Path) -> None:
     guard = LoginGuard(tmp_path / "state" / "g")
-    guard.record_failure()
+    guard.record_attempt()
     assert guard.path.stat().st_mode & 0o777 == 0o600
     assert guard.path.parent.stat().st_mode & 0o777 == 0o700
 
@@ -438,3 +440,105 @@ def test_client_is_read_only_unless_made_writable(tmp_path: Path) -> None:
     with pytest.raises(WriteRefused, match="read-only"):
         c.post("lan-hosts/alias", {"hosts": []})
     assert portal.seen == []
+
+
+def test_refused_keychain_prompt_is_not_asked_again_at_once(tmp_path: Path) -> None:
+    portal, asked = FakePortal(), [0]
+
+    def password() -> str:
+        asked[0] += 1
+        raise AuthRequired("Keychain did not hand over the admin password")
+
+    c = CloudClient(
+        Config(reference="12345678"),
+        transport=httpx.MockTransport(portal),
+        password=password,
+        store=MemoryStore(),  # type: ignore[arg-type]
+        guard=LoginGuard(tmp_path / "guard"),
+    )
+    with pytest.raises(AuthRequired, match="did not hand over"):
+        c.get("uptime")
+    with pytest.raises(AuthRequired, match="less than a minute ago"):
+        c.get("uptime")
+    assert asked[0] == 1 and portal.logins == 0
+    assert not (tmp_path / "guard").exists()
+
+
+def test_env_cannot_proxy_or_weaken_tls(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    for var in ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "https_proxy", "all_proxy"):
+        monkeypatch.setenv(var, "http://127.0.0.1:9")
+    monkeypatch.setenv("SSL_CERT_FILE", str(tmp_path / "attacker-ca.pem"))
+    monkeypatch.setenv("SSL_CERT_DIR", str(tmp_path))
+    monkeypatch.setenv("SSLKEYLOGFILE", str(tmp_path / "keys.log"))
+    cloud = CloudClient(Config(reference="12345678"))
+    local = LocalClient(Config())
+    for http in (cloud._http, local._http):
+        assert http.trust_env is False and not http._mounts  # no proxy transport
+    pool = cloud._http._transport._pool  # type: ignore[attr-defined]
+    ctx = pool._ssl_context
+    assert ctx.keylog_filename is None and ctx.verify_mode == ssl.CERT_REQUIRED
+    assert ctx.check_hostname and ctx.get_ca_certs()  # certifi's roots, not the env's
+
+
+def test_offline_login_does_not_end_logins_for_the_server(tmp_path: Path) -> None:
+    now, online = [0.0], [False]
+    portal = FakePortal()
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if not online[0]:
+            raise httpx.ConnectError("offline", request=req)
+        return portal(req)
+
+    guard = LoginGuard(tmp_path / "guard")
+    c = CloudClient(
+        Config(reference="12345678"),
+        transport=httpx.MockTransport(handler),
+        password=lambda: PASSWORD,
+        store=MemoryStore(),  # type: ignore[arg-type]
+        guard=guard,
+        clock=lambda: now[0],
+    )
+    with pytest.raises(Unreachable):
+        c.get("uptime")
+    assert not guard.path.exists()
+    online[0], now[0] = True, 61.0
+    assert c.get("uptime")["os"] == 10 and portal.logins == 1
+
+
+def test_guard_is_written_before_the_password_goes_out(tmp_path: Path) -> None:
+    guard = LoginGuard(tmp_path / "guard")
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        assert guard.path.exists()  # already counted while the request is in flight
+        raise KeyboardInterrupt
+
+    c = CloudClient(
+        Config(reference="12345678"),
+        transport=httpx.MockTransport(handler),
+        password=lambda: PASSWORD,
+        store=MemoryStore(),  # type: ignore[arg-type]
+        guard=guard,
+    )
+    with pytest.raises(KeyboardInterrupt):
+        c.login()
+    with pytest.raises(LoginBlocked, match="rejected or cut off"):
+        guard.check()
+
+
+def test_unwritable_guard_blocks_the_login(tmp_path: Path) -> None:
+    portal = FakePortal()
+    state = tmp_path / "state"
+    state.mkdir(mode=0o500)
+    try:
+        c = CloudClient(
+            Config(reference="12345678"),
+            transport=httpx.MockTransport(portal),
+            password=lambda: PASSWORD,
+            store=MemoryStore(),  # type: ignore[arg-type]
+            guard=LoginGuard(state / "guard"),
+        )
+        with pytest.raises(LoginBlocked, match="cannot write"):
+            c.get("uptime")
+    finally:
+        state.chmod(0o700)
+    assert portal.logins == 0

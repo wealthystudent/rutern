@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from rutern.cli import main
+from rutern.errors import ApiError
 from rutern.models import parse_dns
 from tests.conftest import load
 from tests.fakes import FakeCloud, make_router
@@ -102,3 +103,22 @@ def test_forwards_show_their_ports(tmp_path: Path, capsys: pytest.CaptureFixture
     assert main(["forwards"], router=lambda: r) == 0
     out = capsys.readouterr().out
     assert "8000-8002" in out and "9000-9002" in out
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        [],
+        {"meta": {}},
+        {"non_volatile": "x"},
+        {"non_volatile": {"v4_servers": "1.1.1.1"}, "meta": []},
+        {"non_volatile": {"v4_servers": [{"x": 1}]}},
+    ],
+)
+def test_odd_dns_response_is_an_api_error_or_empty(raw: object) -> None:
+    try:
+        dns = parse_dns(raw)
+    except ApiError as e:
+        assert "dns" in str(e)
+    else:
+        assert dns.profile == "custom"

@@ -8,7 +8,7 @@ import pytest
 
 from rutern import keychain
 from rutern.config import CLOUD_BASE, Config, discover_reference, valid_reference, write_private
-from rutern.errors import ConfigError
+from rutern.errors import AuthRequired, ConfigError
 
 REAL_FIND = keychain._find  # captured before the autouse fixture swaps it out
 
@@ -67,3 +67,39 @@ def test_keychain_calls_security_by_absolute_path(monkeypatch: pytest.MonkeyPatc
     assert keychain.admin_password() == "pw"
     argv, timeout = seen[0]
     assert argv[0] == "/usr/bin/security" and timeout >= 60
+
+
+def _security_answers(monkeypatch: pytest.MonkeyPatch, answer: int | BaseException) -> None:
+    """`security` exits with `answer`, or raises it."""
+
+    def fake_run(argv: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
+        if isinstance(answer, BaseException):
+            raise answer
+        return subprocess.CompletedProcess(argv, answer, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(keychain, "_find", REAL_FIND)
+
+
+def test_missing_password_says_how_to_store_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    _security_answers(monkeypatch, keychain.NOT_FOUND)
+    with pytest.raises(AuthRequired, match="add-generic-password -s telenor-router"):
+        keychain.admin_password()
+
+
+@pytest.mark.parametrize(
+    "answer", [51, 128, subprocess.TimeoutExpired(["security"], keychain.PROMPT_TIMEOUT)]
+)
+def test_refused_prompt_is_not_a_missing_password(
+    monkeypatch: pytest.MonkeyPatch, answer: int | BaseException
+) -> None:
+    _security_answers(monkeypatch, answer)
+    with pytest.raises(AuthRequired, match="did not hand over"):
+        keychain.admin_password()
+    assert keychain.load_session() is None
+
+
+def test_keychain_needs_macos(monkeypatch: pytest.MonkeyPatch) -> None:
+    _security_answers(monkeypatch, FileNotFoundError(keychain.SECURITY))
+    with pytest.raises(ConfigError, match="macOS"):
+        keychain.admin_password()

@@ -26,7 +26,7 @@ from pydantic import Field
 
 from rutern import audit
 from rutern.cloud import CloudClient
-from rutern.errors import ApiError, WriteRefused
+from rutern.errors import ApiError, Unreachable, WriteRefused
 from rutern.models import Model, Text, clean, normalise_mac
 
 Kind = Literal["alias", "lease", "route", "forward"]
@@ -206,7 +206,13 @@ def apply(cloud: CloudClient, change: Change, *, channel: str = "library", by: s
         }
     )
     try:
-        cloud.post(spec.endpoint, {spec.body_key: new})
+        try:
+            cloud.post(spec.endpoint, {spec.body_key: new})
+        except Unreachable as e:
+            raise Unreachable(
+                f"{e}. The write may still have been saved: plan it again (a dry run "
+                "shows no change if it was)"
+            ) from e
         _verify(cloud, spec, change, items, ids)
     except Exception as e:
         audit.outcome(write_id, f"failed: {type(e).__name__}: {e}")

@@ -99,7 +99,7 @@ def render_status(s: Status) -> str:
             look.fg(look.DIM, "local only. `rutern devices` lists names and IPs via the cloud")
         )
     else:
-        out.append(look.fg(look.DIM, "router not reachable on the LAN; showing cloud data"))
+        out.append(look.fg(look.DIM, "the router did not answer on this LAN; showing cloud data"))
     return "\n".join(out)
 
 
@@ -365,13 +365,31 @@ def cmd_firewall(r: Router, a: argparse.Namespace) -> str:
     return dump(fw) if a.json else render_firewall(fw)
 
 
-# Claude Code marks the shells it runs commands in with this.
-AGENT_ENV = ("CLAUDECODE",)
+# Set by AI agents in the shells they run commands in. Some (Gemini CLI, Copilot
+# in VS Code, Cline) use a real pseudo-terminal, so a TTY alone proves nothing.
+AGENT_ENV = (
+    "AI_AGENT",  # the emerging cross-tool convention (Claude Code, Copilot, OpenCode)
+    "CLAUDECODE",
+    "GEMINI_CLI",
+    "CURSOR_AGENT",
+    "COPILOT_AGENT",
+    "COPILOT_CLI",
+    "CODEX_CI",
+    "CLINE_ACTIVE",
+    "OPENCODE",
+    "GOOSE_TERMINAL",
+)
+
+
+def agent_shell() -> bool:
+    """Run from an AI agent's shell tool, for the agents that say so."""
+    off = ("", "0", "false", "no", "off")
+    return any(os.environ.get(k, "").strip().lower() not in off for k in AGENT_ENV)
 
 
 def human_terminal() -> bool:
     """A person at an interactive terminal. Agents run commands without one."""
-    return sys.stdin.isatty() and not any(os.environ.get(k) for k in AGENT_ENV)
+    return sys.stdin.isatty() and not agent_shell()
 
 
 def ask(prompt: str) -> str:
@@ -419,6 +437,11 @@ def run_change(r: Router, a: argparse.Namespace, change: Change) -> str:
             raise WriteRefused("not confirmed; nothing written")
         by = "port typed at a terminal"
     elif a.yes:
+        if agent_shell():
+            raise WriteRefused(
+                "--yes is for your own scripts, not agents; an agent makes changes through "
+                "`rutern mcp`, where you approve each one"
+            )
         by = "--yes"
     elif confirm(f"apply? {look.fg(look.KEY, 'y')}/{look.fg(look.KEY, 'N')} "):
         by = "y at a terminal"
@@ -524,6 +547,13 @@ def cmd_policy(r: Router, a: argparse.Namespace) -> str:
     return look.frame("policy", look.kv(pol.describe()))
 
 
+def count(text: str) -> int:
+    n = int(text)
+    if n < 1:
+        raise argparse.ArgumentTypeError("must be 1 or more")
+    return n
+
+
 def parse_kinds(text: str) -> frozenset[Kind]:
     if text == "all":
         return frozenset(KINDS)
@@ -539,12 +569,23 @@ def cmd_mcp(r: Router, a: argparse.Namespace) -> str:
 
     r.close()
     pol: Policy = a.policy
-    requested = frozenset[Kind]() if a.allow_writes is None else parse_kinds(a.allow_writes)
+    requested: frozenset[Kind]
+    if a.allow_writes == "all":  # every kind the policy allows, so nothing to report
+        requested = pol.mcp_writes
+    elif a.allow_writes is None:
+        requested = frozenset()
+    else:
+        requested = parse_kinds(a.allow_writes)
     kinds = requested & pol.mcp_writes
     dropped = [k for k in KINDS if k in requested - kinds]
     if dropped:
         print(
             look.error(f"the policy does not allow {', '.join(dropped)} over MCP; left off"),
+            file=sys.stderr,
+        )
+    elif a.allow_writes is not None and not kinds:
+        print(
+            look.error(f"--allow-writes adds nothing: mcp_writes in {policy.path()} is empty"),
             file=sys.stderr,
         )
     serve(pol, kinds)
@@ -647,7 +688,7 @@ def parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_logout)
 
     s = sub.add_parser("history", parents=[common], help="recent writes from the audit log")
-    s.add_argument("-n", type=int, default=20, help="how many (default 20)")
+    s.add_argument("-n", type=count, default=20, help="how many (default 20)")
     s.set_defaults(fn=cmd_history)
 
     s = sub.add_parser("policy", parents=[common], help="what this machine allows rutern to do")

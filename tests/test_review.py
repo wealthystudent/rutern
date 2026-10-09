@@ -133,7 +133,7 @@ def test_logout_clears_the_guard_only_for_a_person(
 ) -> None:
     r, _ = make_router(tmp_path)
     guard = LoginGuard(tmp_path / "guard")
-    guard.record_failure()
+    guard.record_attempt()
     monkeypatch.setattr(cli, "human_terminal", lambda: person)
     monkeypatch.setattr("sys.stdin", io.StringIO(""))
     assert main(["logout"], router=lambda: r) == 0

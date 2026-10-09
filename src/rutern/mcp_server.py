@@ -187,7 +187,12 @@ def build(
     def plan(make: Callable[[], Change]) -> Planned:
         try:
             with lock:
-                return Planned(change=make())
+                change = make()
+            if change.warnings:  # e.g. moving where a port forward lands: a person's call
+                raise WriteRefused(
+                    f"{'; '.join(change.warnings)}. Make this change from the command line"
+                )
+            return Planned(change=change)
         except Exception as e:
             return Planned(error=_error(e))
 

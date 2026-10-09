@@ -7,14 +7,14 @@ lazily, so commands that stay local never read Keychain or log in.
 from __future__ import annotations
 
 import ipaddress
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field
 
 from rutern import writes
 from rutern.cloud import CloudClient
 from rutern.config import Config
-from rutern.errors import Unreachable, WriteRefused
+from rutern.errors import ApiError, PermissionDenied, Unreachable, WriteRefused
 from rutern.local import LocalClient
 from rutern.models import (
     DeviceInfo,
@@ -25,6 +25,7 @@ from rutern.models import (
     Vap,
     WanStatus,
     Wifi,
+    clean,
 )
 from rutern.writes import Change, Kind
 
@@ -79,7 +80,8 @@ class Router:
     # reads
 
     def status(self) -> Status:
-        """Device, WAN and WiFi from the LAN; falls back to cloud uptime when away."""
+        """Device, WAN and WiFi from the LAN; falls back to cloud uptime when away,
+        including on a network where something else answers at the router's address."""
         try:
             return Status(
                 source="local",
@@ -87,7 +89,7 @@ class Router:
                 wan=self.local.wan_status(),
                 vaps=self.local.vaps(),
             )
-        except Unreachable:
+        except (Unreachable, ApiError, PermissionDenied):
             return Status(source="cloud", uptime=self.cloud.uptime())
 
     def hosts(self, *, active_only: bool = False) -> list[Host]:
@@ -150,9 +152,32 @@ class Router:
             after = {**(before or {"srcservice": ""}), "mac": mac, "ip_address": ip}
         elif before is None:
             raise WriteRefused(f"{mac} has no fixed IP")
+        warnings = [] if before == after else self._targeted(before, after)
         host = next((h for h in hosts if h.mac == mac), None)
         label = host.name if host else "unknown device"
-        return Change(kind="lease", id=mac, label=label, before=before, after=after)
+        return Change(
+            kind="lease", id=mac, label=label, before=before, after=after, warnings=warnings
+        )
+
+    def _targeted(self, *leases: dict[str, Any] | None) -> list[str]:
+        """A fixed IP decides which device gets what the DMZ, a port forward or a
+        static route sends to that address; moving that earns a warning."""
+        ips = {clean(str(x.get("ip_address"))) for x in leases if x}
+        c = self.cloud
+        found = ["the DMZ"] if c.dmz() in ips else []
+        for what, n in (
+            ("port forward", sum(f.lan_ip in ips for f in c.forwards())),
+            ("static route", sum(r.next_hop in ips for r in c.routes())),
+        ):
+            if n:
+                found.append(f"a {what}" if n == 1 else f"{n} {what}s")
+        if not found:
+            return []
+        verb = "points" if len(found) == 1 and not found[0][0].isdigit() else "point"
+        return [
+            f"{' and '.join(found)} {verb} at {', '.join(sorted(ips))}; this decides which "
+            "device receives that traffic"
+        ]
 
     def plan_route(
         self, name: str, destination: str | None = None, next_hop: str | None = None
