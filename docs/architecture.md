@@ -27,10 +27,10 @@ Why hybrid and not one backend: local is instant and private but firmware-limite
 ```
 src/rutern/
   config.py       LAN host, fixed portal URL, reference validation, private state files
-  net.py          HTTP send with a response size cap
+  net.py          HTTP send with a response size cap; TLS roots from certifi, env ignored
   policy.py       owner policy file: write kinds per channel, read-only by default
   audit.py        append-only write log with the list as it was before each write
-  keychain.py     Keychain read of the admin password; session cookie cache
+  keychain.py     Keychain read of the admin password (macOS only); session cookie cache
   errors.py       ConfigError, Unreachable, PermissionDenied, AuthRequired, LoginFailed, LoginBlocked, ApiError, NotAllowed, WriteRefused
   models.py       Pydantic models; router strings cleaned, secrets redacted
   local.py        LocalClient: /ws transport + unauthenticated reads
@@ -43,19 +43,9 @@ src/rutern/
 scripts/record_fixtures.py   re-record scrubbed fixtures from the live router
 tests/
   fixtures/       recorded /ws and /v1 JSON, scrubbed; tests run offline
+.github/          CI on macOS, tag-triggered release to PyPI, Dependabot
 ```
-
-## Build order
-
-Phased, each phase ends green and committed before the next (full tasks in `TODO.md`):
-
-0. Package scaffold (uv, pytest, ruff, mypy, fixtures dir)
-1. Local read client + models, tested against fixtures
-2. Cloud session + read client (Keychain login, cookie, auto re-login, redaction)
-3. `Router` facade + CLI reads (`status`, `devices`, `wifi`)
-4. Writes, safest first (`hostname_alias`), with dry-run, diff and read-back
-5. MCP server: read tools, then gated writes, with untrusted-input handling
 
 ## Testing approach
 
-No test may require a live router. Record real responses once, scrub secrets, and commit them as fixtures. Live calls are confined to a small, explicitly-run smoke check (`make live`) that re-verifies the login flow and a couple of reads, so firmware drift surfaces as a clear failure rather than silent wrong data.
+No test may require a live router. Record real responses once, scrub secrets, and commit them as fixtures. Live calls are confined to a small, explicitly-run smoke check (`make live`) that re-verifies the login flow and a couple of reads, so firmware drift surfaces as a clear failure rather than silent wrong data. See `docs/development.md`.
