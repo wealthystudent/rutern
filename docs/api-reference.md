@@ -85,6 +85,8 @@ Note: `/v1/{ref}/status` does not exist (404). Use `/uptime` for status-like dat
 
 ### Writes
 
+rutern is read-only and sends none of these; they are recorded for when writes return.
+
 The portal never calls write endpoints from the browser: its pages post SvelteKit form actions (fields like `hostname_alias.<mac>`) and the portal server calls /v1. The frontend API client (`lanHostsAliasSet`, `wlanSet`, …) shows `POST /{ref}/<endpoint>` with a JSON body and an optional `x-tn-txn-id` header.
 
 Every list endpoint replaces the whole saved list. Success is HTTP 201 `{"non_volatile": true, "volatile": true}`; a bad body is HTTP 400 `{statusCode, message, timestamp, path}` and changes nothing. Validation reports one field at a time, with messages like `"Lan_ip must be an ip address"`.

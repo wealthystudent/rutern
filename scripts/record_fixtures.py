@@ -138,7 +138,6 @@ CLOUD_READS = (
     "uptime",
     "lan-hosts",
     "wlan",
-    "lan-hosts/alias",
     "static-dhcp-leases",
     "static-routes",
     "dhcp",

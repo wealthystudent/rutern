@@ -1,18 +1,20 @@
 from __future__ import annotations
 
+import argparse
+import io
 import json
 from pathlib import Path
 
 import httpx
 import pytest
 
-from rutern.cli import duration, main
+from rutern import cli
+from rutern.cli import duration, main, parser
 from rutern.cloud import COOKIE, CloudClient, LoginGuard, ReferencePin
 from rutern.config import Config
 from rutern.local import LocalClient
 from rutern.router import Router
 from tests.fakes import (
-    WRITABLE,
     FakeCloud,
     MemoryStore,
     local_handler,
@@ -27,7 +29,7 @@ def run(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], *argv: str, cloud: FakeCloud | None = None
 ) -> tuple[int, str, str, FakeCloud]:
     r, fake = make_router(tmp_path, cloud=cloud)
-    code = main(list(argv), router=lambda: r, pol=WRITABLE)
+    code = main(list(argv), router=lambda: r)
     out, err = capsys.readouterr()
     return code, out, err, fake
 
@@ -72,28 +74,9 @@ def test_wifi_show_secrets(
     assert json.loads(out)[0]["encryption_key"] == "s3cret-wifi-pass"
 
 
-def test_alias_dry_run_writes_nothing(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    code, out, _, fake = run(tmp_path, capsys, "host", "alias", "set", KNOWN, "Den", "--dry-run")
-    assert code == 0 and "dry run" in out and fake.posts == []
-
-
-def test_alias_refuses_without_tty_or_yes(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    code, _, err, fake = run(tmp_path, capsys, "host", "alias", "set", KNOWN, "Den")
-    assert code == 1 and "not confirmed" in err and fake.posts == []
-
-
-def test_alias_yes_writes_and_verifies(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    code, out, _, fake = run(
-        tmp_path, capsys, "host", "alias", "set", KNOWN, "Den", "--yes", "--json"
-    )
-    assert code == 0 and json.loads(out)["verified"] is True and len(fake.posts) == 1
-
-
 def test_errors_go_to_stderr(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    code, out, err, _ = run(tmp_path, capsys, "host", "alias", "set", "zz", "x", "--yes")
-    assert code == 1 and out == "" and "not a MAC" in err
+    code, out, err, _ = run(tmp_path, capsys, "wifi", "--show-secrets")
+    assert code == 1 and out == "" and "interactive terminal" in err
 
 
 def test_duration() -> None:
@@ -197,3 +180,63 @@ def test_odd_upnp_response_is_an_api_error(
     cloud.data["upnp/mappings"] = {"upnp_mappings": "nope"}
     code, _, err, _ = run(tmp_path, capsys, "forwards", cloud=cloud)
     assert code == 1 and "upnp_mappings" in err
+
+
+# WiFi keys reach the screen only for a person at a terminal
+
+
+def secret_cloud() -> FakeCloud:
+    cloud = FakeCloud()
+    cloud.data["wlan"]["non_volatile"][0]["encryption_key"] = "s3cret-wifi-pass"
+    return cloud
+
+
+def test_show_secrets_refused_without_terminal(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    r, _ = make_router(tmp_path, cloud=secret_cloud())
+    assert main(["wifi", "--show-secrets", "--json"], router=lambda: r) == 1
+    captured = capsys.readouterr()
+    assert "interactive terminal" in captured.err and "s3cret" not in captured.out
+
+
+def test_show_secrets_on_a_terminal(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cli, "human_terminal", lambda: True)
+    r, _ = make_router(tmp_path, cloud=secret_cloud())
+    assert main(["wifi", "--show-secrets"], router=lambda: r) == 0
+    assert "s3cret-wifi-pass" in capsys.readouterr().out
+
+
+def test_agent_shell_is_not_a_human_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Tty(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    monkeypatch.setattr("sys.stdin", Tty())
+    assert cli.human_terminal()
+    for var in cli.AGENT_ENV:
+        monkeypatch.setenv(var, "0")
+    assert cli.human_terminal()  # explicitly off
+    for var, value in (("CLAUDECODE", "1"), ("AI_AGENT", "claude-code"), ("GEMINI_CLI", "1")):
+        monkeypatch.setenv(var, value)
+        assert not cli.human_terminal()
+        monkeypatch.setenv(var, "")
+
+
+def test_only_read_commands_exist() -> None:
+    sub = next(a for a in parser()._actions if isinstance(a, argparse._SubParsersAction))
+    assert set(sub.choices) == {
+        "status",
+        "devices",
+        "wifi",
+        "network",
+        "leases",
+        "routes",
+        "forwards",
+        "firewall",
+        "login",
+        "logout",
+        "mcp",
+    }

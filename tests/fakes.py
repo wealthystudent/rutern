@@ -2,25 +2,16 @@
 
 from __future__ import annotations
 
-import copy
 import json
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 import httpx
 
 from rutern.cloud import COOKIE, CloudClient, LoginGuard
 from rutern.config import Config
 from rutern.local import LocalClient
-from rutern.policy import Policy
 from rutern.router import Router
-from rutern.writes import KINDS, Kind
 from tests.conftest import load
-
-# A policy that allows every write, for tests about the write flow itself.
-WRITABLE = Policy(cli_writes=frozenset(KINDS), mcp_writes=frozenset(KINDS) - {"forward"})
-MCP_WRITES = WRITABLE.mcp_writes
 
 LOCAL_CALLS = {
     ("DeviceInfo", "get"): "local/deviceinfo.json",
@@ -33,7 +24,6 @@ CLOUD_ENDPOINTS = (
     "uptime",
     "lan-hosts",
     "wlan",
-    "lan-hosts/alias",
     "static-dhcp-leases",
     "static-routes",
     "dhcp",
@@ -45,14 +35,6 @@ CLOUD_ENDPOINTS = (
     "upnp",
     "upnp/mappings",
 )
-
-
-BODY_KEYS = {
-    "lan-hosts/alias": "hosts",
-    "static-dhcp-leases": "leases",
-    "static-routes": "rules",
-    "nat-rules": "rules",
-}
 
 
 def local_handler(req: httpx.Request) -> httpx.Response:
@@ -72,14 +54,12 @@ def unreachable(req: httpx.Request) -> httpx.Response:
 
 
 class FakeCloud:
-    """Serves cloud fixtures and keeps alias writes in memory."""
+    """Serves cloud fixtures. rutern only ever reads, so anything but a GET is
+    recorded in `posts` and refused."""
 
-    def __init__(self, *, merge_aliases: bool = False, ignore_writes: bool = False):
+    def __init__(self) -> None:
         self.data = {ep: load(f"cloud/{ep.replace('/', '-')}.json") for ep in CLOUD_ENDPOINTS}
-        self.merge_aliases = merge_aliases
-        self.ignore_writes = ignore_writes
-        self.posts: list[tuple[str, Any]] = []
-        self.after_post: Callable[[FakeCloud], None] | None = None
+        self.posts: list[tuple[str, str]] = []
 
     def __call__(self, req: httpx.Request) -> httpx.Response:
         if COOKIE not in req.headers.get("cookie", ""):
@@ -87,27 +67,9 @@ class FakeCloud:
         prefix = "/v1/12345678/"
         assert req.url.path.startswith(prefix), req.url.path
         ep = req.url.path[len(prefix) :]
-        if req.method == "POST":
-            body = json.loads(req.content)
-            self.posts.append((ep, body))
-            key = BODY_KEYS.get(ep)
-            if key is None:
-                return httpx.Response(404)
-            if not isinstance(body.get(key), list):
-                return httpx.Response(
-                    400, json={"statusCode": 400, "message": f"{key.title()} must be an array"}
-                )
-            if not self.ignore_writes:
-                cur = self.data[ep]
-                if self.merge_aliases:
-                    merged = {e["mac"]: e for e in cur["non_volatile"]}
-                    merged.update({e["mac"]: e for e in body[key]})
-                    cur["non_volatile"] = list(merged.values())
-                else:
-                    cur["non_volatile"] = copy.deepcopy(body[key])
-            if self.after_post:
-                self.after_post(self)
-            return httpx.Response(201, json={"non_volatile": True, "volatile": True})
+        if req.method != "GET":
+            self.posts.append((req.method, ep))
+            return httpx.Response(405)
         if ep not in self.data:
             return httpx.Response(404)
         return httpx.Response(200, json=self.data[ep])
@@ -132,7 +94,6 @@ def make_router(
     *,
     cloud: FakeCloud | None = None,
     local_up: bool = True,
-    writes: frozenset[Kind] = frozenset(KINDS),
 ) -> tuple[Router, FakeCloud]:
     cfg = Config(reference="12345678")
     fake = cloud or FakeCloud()
@@ -145,6 +106,5 @@ def make_router(
         password=lambda: "never-used",
         store=MemoryStore(),  # type: ignore[arg-type]
         guard=LoginGuard(tmp_path / "guard"),
-        writable=bool(writes),
     )
-    return Router(cfg, local=local, cloud=cc, writes=writes), fake
+    return Router(cfg, local=local, cloud=cc), fake

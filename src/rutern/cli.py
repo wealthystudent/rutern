@@ -11,8 +11,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from rutern import __version__, audit, look, policy, writes
-from rutern.errors import ConfigError, NotAllowed, RuternError, WriteRefused
+from rutern import __version__, look
+from rutern.errors import ConfigError, NotAllowed, RuternError
 from rutern.models import (
     Firewall,
     Host,
@@ -23,12 +23,8 @@ from rutern.models import (
     Upnp,
     Wifi,
     WifiNetwork,
-    clean,
-    scrub,
 )
-from rutern.policy import Policy
 from rutern.router import Router, Status
-from rutern.writes import KINDS, Change, Kind
 
 
 def duration(seconds: int | None) -> str:
@@ -161,24 +157,6 @@ def render_wifi(wifi: Wifi, live: bool, show_secrets: bool) -> str:
     if not show_secrets:
         lines.append(look.fg(look.DIM, "keys hidden; --show-secrets reveals them"))
     return look.frame(heading, lines)
-
-
-TITLES = {"alias": "alias", "lease": "fixed ip", "route": "static route", "forward": "port forward"}
-
-
-def render_change(c: Change) -> str:
-    before, after = writes.describe(c.kind, c.before), writes.describe(c.kind, c.after)
-    action = "add" if c.before is None else "remove" if c.after is None else "change"
-    what = f"{c.label}  {look.fg(look.DIM, c.id)}" if c.label != c.id else c.label
-    lines = look.kv(
-        [
-            ("entry", what),
-            ("before", look.fg(look.ERROR, before) if before else look.fg(look.DIM, "(none)")),
-            ("after", look.fg(look.OK, after) if after else look.fg(look.DIM, "(none)")),
-        ]
-    )
-    lines += [look.fg(look.KEY, f"warning: {w}") for w in c.warnings]
-    return look.frame(f"{action} {TITLES[c.kind]}", lines)
 
 
 def on_off(on: bool) -> str:
@@ -321,14 +299,11 @@ def cmd_devices(r: Router, a: argparse.Namespace) -> str:
 
 
 def cmd_wifi(r: Router, a: argparse.Namespace) -> str:
-    if a.show_secrets:
-        if not a.policy.reveal_secrets:
-            raise NotAllowed("revealing WiFi keys is off in the policy (reveal_secrets)")
-        if not human_terminal():
-            raise NotAllowed(
-                "--show-secrets only works for a person at an interactive terminal, "
-                "never for scripts or agents"
-            )
+    if a.show_secrets and not human_terminal():
+        raise NotAllowed(
+            "--show-secrets only works for a person at an interactive terminal, "
+            "never for scripts or agents"
+        )
     w = r.wifi()
     if a.json:
         nets = w.volatile if a.live else w.non_volatile
@@ -392,90 +367,6 @@ def human_terminal() -> bool:
     return sys.stdin.isatty() and not agent_shell()
 
 
-def ask(prompt: str) -> str:
-    """Prompt on stderr, so stdout stays clean for --json."""
-    sys.stdout.flush()
-    sys.stderr.write(prompt)
-    sys.stderr.flush()
-    return sys.stdin.readline().strip()
-
-
-def confirm(prompt: str) -> bool:
-    return human_terminal() and ask(prompt).lower() in ("y", "yes")
-
-
-def opens_ports(change: Change) -> bool:
-    return change.kind == "forward" and change.after is not None
-
-
-def plan_json(change: Change) -> dict[str, Any]:
-    """The plan for --json; before/after are saved-list values, so they get cleaned."""
-    out: dict[str, Any] = scrub(change.model_dump(mode="json"))
-    return out
-
-
-def run_change(r: Router, a: argparse.Namespace, change: Change) -> str:
-    """The shared write flow: show, dry run or confirm, write, verify.
-    Opening a port always takes a person at a terminal typing the port."""
-    shown = render_change(change)
-    if change.noop:
-        return dump({"changed": False, **plan_json(change)}) if a.json else shown + "\nno change"
-    if a.dry_run:
-        if a.json:
-            return dump({"dry_run": True, **plan_json(change)})
-        return shown + "\ndry run, nothing written"
-    if opens_ports(change) or not a.yes:
-        print(shown, file=sys.stderr if a.json else sys.stdout)
-    if opens_ports(change):
-        assert change.after is not None
-        if not human_terminal():
-            raise WriteRefused(
-                "opening a port needs a person at an interactive terminal; --yes does not apply"
-            )
-        want = ports(change.after["wan_port_start"], change.after["wan_port_end"])
-        if ask(f"type {look.fg(look.KEY, want)} to open it to the internet: ") != want:
-            raise WriteRefused("not confirmed; nothing written")
-        by = "port typed at a terminal"
-    elif a.yes:
-        if agent_shell():
-            raise WriteRefused(
-                "--yes is for your own scripts, not agents; an agent makes changes through "
-                "`rutern mcp`, where you approve each one"
-            )
-        by = "--yes"
-    elif confirm(f"apply? {look.fg(look.KEY, 'y')}/{look.fg(look.KEY, 'N')} "):
-        by = "y at a terminal"
-    else:
-        raise WriteRefused("not confirmed; nothing written (pass --yes when not interactive)")
-    r.apply(change, by=by)
-    if a.json:
-        return dump({"changed": True, "verified": True, **plan_json(change)})
-    shown_before = opens_ports(change) or not a.yes
-    return ("" if shown_before else shown + "\n") + look.fg(
-        look.OK, "written and verified by read-back"
-    )
-
-
-def cmd_alias(r: Router, a: argparse.Namespace) -> str:
-    return run_change(r, a, r.plan_alias(a.mac, "" if a.action == "clear" else a.name))
-
-
-def cmd_lease_write(r: Router, a: argparse.Namespace) -> str:
-    return run_change(r, a, r.plan_lease(a.mac, a.ip if a.action == "set" else None))
-
-
-def cmd_route_write(r: Router, a: argparse.Namespace) -> str:
-    if a.action == "remove":
-        return run_change(r, a, r.plan_route(a.name))
-    return run_change(r, a, r.plan_route(a.name, a.destination, a.next_hop))
-
-
-def cmd_forward_write(r: Router, a: argparse.Namespace) -> str:
-    if a.action == "remove":
-        return run_change(r, a, r.plan_forward(a.name))
-    return run_change(r, a, r.plan_forward(a.name, a.protocol, a.wan_port, a.lan_ip, a.lan_port))
-
-
 def cmd_login(r: Router, a: argparse.Namespace) -> str:
     if not r.cloud.has_reference:
         # The portal names the router by public IP, which only means this
@@ -502,99 +393,17 @@ def cmd_logout(r: Router, a: argparse.Namespace) -> str:
     return "session forgotten; the login guard only clears for a person at a terminal"
 
 
-def render_history(events: list[dict[str, Any]]) -> str:
-    rows = []
-    for e in events:
-        kind = e.get("kind") if e.get("kind") in TITLES else None
-        if kind is None:
-            continue
-        before, after = (
-            writes.describe(kind, e.get("before")),
-            writes.describe(kind, e.get("after")),
-        )
-        action = "add" if not before else "remove" if not after else "change"
-        outcome = str(e.get("outcome", ""))
-        role = look.OK if outcome == "verified" else look.ERROR
-        rows.append(
-            [
-                str(e.get("ts", ""))[:19].replace("T", " "),
-                f"{e.get('channel', '')}",
-                f"{action} {TITLES[kind]}",
-                clean(str(e.get("id", ""))),
-                f"{before or '-'} → {after or '-'}",
-                look.fg(role, outcome),
-            ]
-        )
-    head = ["when", "via", "what", "entry", "change", "outcome"]
-    lines = look.table(head, rows, max_col=48) if rows else none_row("no writes recorded")
-    lines.append(look.fg(look.DIM, f"log with full backups: {audit.path()}"))
-    return look.frame("history", lines)
-
-
-def cmd_history(r: Router, a: argparse.Namespace) -> str:
-    events = audit.recent(a.n)
-    if a.json:
-        return dump([scrub(e, max_depth=6, max_items=100_000) for e in events])
-    return render_history(events)
-
-
-def cmd_policy(r: Router, a: argparse.Namespace) -> str:
-    if a.action == "init":
-        return f"wrote {policy.init()}; it allows no writes until you edit it"
-    pol: Policy = a.policy
-    if a.json:
-        return dump(dict(pol.describe()))
-    return look.frame("policy", look.kv(pol.describe()))
-
-
-def count(text: str) -> int:
-    n = int(text)
-    if n < 1:
-        raise argparse.ArgumentTypeError("must be 1 or more")
-    return n
-
-
-def parse_kinds(text: str) -> frozenset[Kind]:
-    if text == "all":
-        return frozenset(KINDS)
-    kinds = {k.strip() for k in text.split(",") if k.strip()}
-    bad = sorted(kinds - set(KINDS))
-    if bad:
-        raise ConfigError(f"unknown write kinds {bad}; use all or a list of {', '.join(KINDS)}")
-    return frozenset(k for k in KINDS if k in kinds)
-
-
 def cmd_mcp(r: Router, a: argparse.Namespace) -> str:
     from rutern.mcp_server import serve
 
     r.close()
-    pol: Policy = a.policy
-    requested: frozenset[Kind]
-    if a.allow_writes == "all":  # every kind the policy allows, so nothing to report
-        requested = pol.mcp_writes
-    elif a.allow_writes is None:
-        requested = frozenset()
-    else:
-        requested = parse_kinds(a.allow_writes)
-    kinds = requested & pol.mcp_writes
-    dropped = [k for k in KINDS if k in requested - kinds]
-    if dropped:
-        print(
-            look.error(f"the policy does not allow {', '.join(dropped)} over MCP; left off"),
-            file=sys.stderr,
-        )
-    elif a.allow_writes is not None and not kinds:
-        print(
-            look.error(f"--allow-writes adds nothing: mcp_writes in {policy.path()} is empty"),
-            file=sys.stderr,
-        )
-    serve(pol, kinds)
+    serve()
     return ""
 
 
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="rutern", description="Read and configure a Telenor EX5700 router."
+        prog="rutern", description="Read a Telenor WiFi Ruter II (Zyxel EX5700)."
     )
     p.add_argument("--version", action="version", version=f"rutern {__version__}")
     common = argparse.ArgumentParser(add_help=False)
@@ -614,69 +423,20 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--show-secrets", action="store_true", help="reveal WiFi keys")
     s.set_defaults(fn=cmd_wifi)
 
-    write = argparse.ArgumentParser(add_help=False, parents=[common])
-    write.add_argument("--dry-run", action="store_true", help="show the change, write nothing")
-    write.add_argument(
-        "--yes", action="store_true", help="apply without asking (not for opening ports)"
-    )
-
-    def section(name: str, fn: Callable[..., str], text: str) -> Any:
-        s = sub.add_parser(name, parents=[common], help=text)
-        s.set_defaults(fn=fn)
-        return s.add_subparsers(dest="action", metavar="action")
-
     s = sub.add_parser(
         "network", parents=[common], help="LAN, DHCP, DNS, firewall, DMZ and UPnP overview"
     )
     s.set_defaults(fn=cmd_network)
 
-    acts = section("leases", cmd_leases, "fixed IPs (DHCP reservations)")
-    s = acts.add_parser("set", parents=[write], help="give a device a fixed IP")
-    s.add_argument("mac")
-    s.add_argument("ip")
-    s.set_defaults(fn=cmd_lease_write, kind="lease")
-    s = acts.add_parser("remove", parents=[write], help="remove a device's fixed IP")
-    s.add_argument("mac")
-    s.set_defaults(fn=cmd_lease_write, kind="lease")
-
-    acts = section("routes", cmd_routes, "static routes")
-    s = acts.add_parser("add", parents=[write], help="add or replace a static route")
-    s.add_argument("name")
-    s.add_argument("destination", help="network, e.g. 10.1.0.0/24")
-    s.add_argument("next_hop", metavar="next-hop", help="LAN IP of the gateway, e.g. 10.0.0.42")
-    s.set_defaults(fn=cmd_route_write, kind="route")
-    s = acts.add_parser("remove", parents=[write], help="remove a static route")
-    s.add_argument("name")
-    s.set_defaults(fn=cmd_route_write, kind="route")
-
-    acts = section("forwards", cmd_forwards, "port forwards and UPnP mappings")
-    s = acts.add_parser("add", parents=[write], help="add or replace a port forward")
-    s.add_argument("name")
-    s.add_argument("protocol", choices=["tcp", "udp"])
-    s.add_argument(
-        "wan_port", metavar="wan-port", help="public port or range, e.g. 443 or 8000-8010"
-    )
-    s.add_argument("lan_ip", metavar="lan-ip")
-    s.add_argument("--lan-port", help="port on the device (default: same as wan-port)")
-    s.set_defaults(fn=cmd_forward_write, kind="forward")
-    s = acts.add_parser("remove", parents=[write], help="remove a port forward")
-    s.add_argument("name")
-    s.set_defaults(fn=cmd_forward_write, kind="forward")
+    for name, fn, text in (
+        ("leases", cmd_leases, "fixed IPs (DHCP reservations)"),
+        ("routes", cmd_routes, "static routes"),
+        ("forwards", cmd_forwards, "port forwards and UPnP mappings"),
+    ):
+        sub.add_parser(name, parents=[common], help=text).set_defaults(fn=fn)
 
     s = sub.add_parser("firewall", parents=[common], help="firewall status and custom rules")
     s.set_defaults(fn=cmd_firewall)
-
-    host = sub.add_parser("host", help="change a device's settings")
-    hsub = host.add_subparsers(dest="host_cmd", required=True, metavar="setting")
-    alias = hsub.add_parser("alias", help="the name the router shows for a device")
-    asub = alias.add_subparsers(dest="action", required=True, metavar="action")
-    s = asub.add_parser("set", parents=[write], help="set an alias")
-    s.add_argument("mac")
-    s.add_argument("name")
-    s.set_defaults(fn=cmd_alias, kind="alias")
-    s = asub.add_parser("clear", parents=[write], help="remove an alias")
-    s.add_argument("mac")
-    s.set_defaults(fn=cmd_alias, kind="alias")
 
     s = sub.add_parser(
         "login", parents=[common], help="log in to the cloud once and cache the session"
@@ -687,45 +447,18 @@ def parser() -> argparse.ArgumentParser:
     )
     s.set_defaults(fn=cmd_logout)
 
-    s = sub.add_parser("history", parents=[common], help="recent writes from the audit log")
-    s.add_argument("-n", type=count, default=20, help="how many (default 20)")
-    s.set_defaults(fn=cmd_history)
-
-    s = sub.add_parser("policy", parents=[common], help="what this machine allows rutern to do")
-    s.set_defaults(fn=cmd_policy, action=None)
-    psub = s.add_subparsers(dest="action", metavar="action")
-    psub.add_parser("init", help="write a read-only policy file to edit")
-
     s = sub.add_parser("mcp", help="run the MCP server on stdio")
-    s.add_argument(
-        "--allow-writes",
-        nargs="?",
-        const="all",
-        metavar="KINDS",
-        help="expose the write tools the policy allows (all, or e.g. alias,lease)",
-    )
     s.set_defaults(fn=cmd_mcp)
     return p
 
 
-def main(
-    argv: Sequence[str] | None = None,
-    router: Callable[[], Router] | None = None,
-    pol: Policy | None = None,
-) -> int:
+def main(argv: Sequence[str] | None = None, router: Callable[[], Router] | None = None) -> int:
     a = parser().parse_args(argv)
     if getattr(a, "no_color", False) or getattr(a, "json", False):
         look.set_color(False)
     r: Router | None = None
     try:
-        a.policy = pol or policy.load()
-        kind = getattr(a, "kind", None)
-        if kind and not a.dry_run and kind not in a.policy.cli_writes:
-            raise WriteRefused(
-                f"{TITLES[kind]} writes are off. To allow them, add {kind!r} to cli_writes "
-                f"in {policy.path()} (`rutern policy init` writes one)"
-            )
-        r = router() if router else Router(writes=a.policy.cli_writes, channel="cli")
+        r = router() if router else Router()
         out = a.fn(r, a)
     except RuternError as e:
         print(look.error(str(e)), file=sys.stderr)

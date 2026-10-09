@@ -18,7 +18,7 @@
    read-only subset
 ```
 
-`Router` decides which backend answers a request: local when it is sufficient (device info, WAN/public IP, WiFi SSIDs, connected MACs) and cloud when it is not (host names + IPs, DHCP, firewall, any write). The two never need to run in lockstep; local works with no internet and no credentials, cloud is lazily logged in on first need.
+`Router` decides which backend answers a request: local when it is sufficient (device info, WAN/public IP, WiFi SSIDs, connected MACs) and cloud when it is not (host names + IPs, DHCP, firewall). Both only read. The two never need to run in lockstep; local works with no internet and no credentials, cloud is lazily logged in on first need.
 
 Why hybrid and not one backend: local is instant and private but firmware-limited to a read-only subset with no device names/IPs and no writes; cloud is complete but needs Telenor's relay and a login. See `docs/api-reference.md` for the hard limits behind this split.
 
@@ -28,18 +28,15 @@ Why hybrid and not one backend: local is instant and private but firmware-limite
 src/rutern/
   config.py       LAN host, fixed portal URL, reference validation, private state files
   net.py          HTTP send with a response size cap; TLS roots from certifi, env ignored
-  policy.py       owner policy file: write kinds per channel, read-only by default
-  audit.py        append-only write log with the list as it was before each write
   keychain.py     Keychain read of the admin password (macOS only); session cookie cache
-  errors.py       ConfigError, Unreachable, PermissionDenied, AuthRequired, LoginFailed, LoginBlocked, ApiError, NotAllowed, WriteRefused
+  errors.py       ConfigError, Unreachable, PermissionDenied, AuthRequired, LoginFailed, LoginBlocked, ApiError, NotAllowed
   models.py       Pydantic models; router strings cleaned, secrets redacted
   local.py        LocalClient: /ws transport + unauthenticated reads
   cloud.py        CloudClient: login guard, session, typed /v1 reads
-  router.py       Router facade; plan_* for aliases, fixed IPs, routes, port forwards; apply
-  writes.py       list edits: full-list POST, stale-plan check, read-back verification
+  router.py       Router facade over both backends
   look.py         the shared tool look (palette, frame, table) for CLI output
   cli.py          `rutern` command line
-  mcp_server.py   MCP server on stdio: read tools, and policy-allowed writes the person approves via elicitation
+  mcp_server.py   MCP server on stdio: four read tools
 scripts/record_fixtures.py   re-record scrubbed fixtures from the live router
 tests/
   fixtures/       recorded /ws and /v1 JSON, scrubbed; tests run offline

@@ -1,20 +1,19 @@
 """Router: one object over the local and cloud backends.
 
 Local answers when it can (fast, offline, no credentials). Cloud is created
-lazily, so commands that stay local never read Keychain or log in.
+lazily, so commands that stay local never read the password or log in.
+Everything here reads; rutern changes nothing on the router.
 """
 
 from __future__ import annotations
 
-import ipaddress
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import Field
 
-from rutern import writes
 from rutern.cloud import CloudClient
 from rutern.config import Config
-from rutern.errors import ApiError, PermissionDenied, Unreachable, WriteRefused
+from rutern.errors import ApiError, PermissionDenied, Unreachable
 from rutern.local import LocalClient
 from rutern.models import (
     DeviceInfo,
@@ -25,9 +24,7 @@ from rutern.models import (
     Vap,
     WanStatus,
     Wifi,
-    clean,
 )
-from rutern.writes import Change, Kind
 
 
 class Status(Model):
@@ -45,12 +42,8 @@ class Router:
         *,
         local: LocalClient | None = None,
         cloud: CloudClient | None = None,
-        writes: frozenset[Kind] = frozenset(),
-        channel: str = "library",
     ):
         self.config = config or Config()
-        self.writes = writes
-        self.channel = channel
         self._local = local
         self._cloud = cloud
 
@@ -63,7 +56,7 @@ class Router:
     @property
     def cloud(self) -> CloudClient:
         if self._cloud is None:
-            self._cloud = CloudClient(self.config, writable=bool(self.writes))
+            self._cloud = CloudClient(self.config)
         return self._cloud
 
     def close(self) -> None:
@@ -116,148 +109,3 @@ class Router:
             routes=c.routes(),
             forwards=c.forwards(),
         )
-
-    # writes: plan_* never write; apply() writes one planned change and verifies it
-
-    def _lan(self) -> tuple[ipaddress.IPv4Network, str]:
-        router = self.cloud.dhcp().router_address
-        return writes.lan_network(router), router
-
-    def plan_alias(self, mac: str, alias: str) -> Change:
-        """Set the name the router shows for a device; an empty alias clears it."""
-        mac = writes.mac(mac)
-        host = next((h for h in self.cloud.hosts() if h.mac == mac), None)
-        if host is None:
-            raise WriteRefused(f"no known device with MAC {mac}")
-        after = {"mac": mac, "hostname": writes.name(alias, "alias")} if alias.strip() else None
-        return Change(
-            kind="alias",
-            id=mac,
-            label=host.hostname or host.vendor or mac,
-            before=writes.current(self.cloud, "alias", mac),
-            after=after,
-        )
-
-    def plan_lease(self, mac: str, ip: str | None) -> Change:
-        """Give a device a fixed IP, or with ip=None remove its reservation."""
-        mac = writes.mac(mac)
-        hosts = self.cloud.hosts()
-        before = writes.current(self.cloud, "lease", mac)
-        after = None
-        if ip is not None:
-            lan, router = self._lan()
-            ip = writes.lan_ip(ip, lan, router)
-            writes.check_lease(writes.saved(self.cloud, "lease"), mac, ip)
-            self._check_in_use(hosts, mac, ip)
-            after = {**(before or {"srcservice": ""}), "mac": mac, "ip_address": ip}
-        elif before is None:
-            raise WriteRefused(f"{mac} has no fixed IP")
-        warnings = [] if before == after else self._targeted(before, after)
-        host = next((h for h in hosts if h.mac == mac), None)
-        label = host.name if host else "unknown device"
-        return Change(
-            kind="lease", id=mac, label=label, before=before, after=after, warnings=warnings
-        )
-
-    def _targeted(self, *leases: dict[str, Any] | None) -> list[str]:
-        """A fixed IP decides which device gets what the DMZ, a port forward or a
-        static route sends to that address; moving that earns a warning."""
-        ips = {clean(str(x.get("ip_address"))) for x in leases if x}
-        c = self.cloud
-        found = ["the DMZ"] if c.dmz() in ips else []
-        for what, n in (
-            ("port forward", sum(f.lan_ip in ips for f in c.forwards())),
-            ("static route", sum(r.next_hop in ips for r in c.routes())),
-        ):
-            if n:
-                found.append(f"a {what}" if n == 1 else f"{n} {what}s")
-        if not found:
-            return []
-        verb = "points" if len(found) == 1 and not found[0][0].isdigit() else "point"
-        return [
-            f"{' and '.join(found)} {verb} at {', '.join(sorted(ips))}; this decides which "
-            "device receives that traffic"
-        ]
-
-    def plan_route(
-        self, name: str, destination: str | None = None, next_hop: str | None = None
-    ) -> Change:
-        """Add or replace a static route; without destination it removes the route."""
-        name = writes.name(name)
-        before = writes.current(self.cloud, "route", name)
-        after = None
-        if destination is not None:
-            if next_hop is None:
-                raise WriteRefused("a route needs a next hop")
-            lan, router = self._lan()
-            after = {
-                "name": name,
-                "destination": writes.network(destination, lan),
-                "next_hop": writes.lan_ip(next_hop, lan, router, "next hop"),
-            }
-        elif before is None:
-            raise WriteRefused(f"no static route named {name!r}")
-        return Change(kind="route", id=name, label=name, before=before, after=after)
-
-    def plan_forward(
-        self,
-        name: str,
-        protocol: str | None = None,
-        wan_port: str | None = None,
-        lan_ip: str | None = None,
-        lan_port: str | None = None,
-    ) -> Change:
-        """Add or replace a port forward; without protocol it removes the forward."""
-        name = writes.name(name)
-        before = writes.current(self.cloud, "forward", name)
-        after = None
-        warnings: list[str] = []
-        if protocol is not None:
-            if wan_port is None or lan_ip is None:
-                raise WriteRefused("a port forward needs a WAN port and a LAN IP")
-            proto = protocol.strip().lower()
-            if proto not in ("tcp", "udp"):
-                raise WriteRefused("protocol must be tcp or udp")
-            wan = writes.port_range(wan_port, "WAN port")
-            lan = writes.port_range(lan_port, "LAN port") if lan_port else wan
-            if lan[1] - lan[0] != wan[1] - wan[0]:
-                raise WriteRefused("WAN and LAN port ranges must be the same size")
-            net, router = self._lan()
-            after = {
-                "name": name,
-                "protocol": proto,
-                "lan_ip": writes.lan_ip(lan_ip, net, router, "LAN IP"),
-                "wan_port_start": wan[0],
-                "wan_port_end": wan[1],
-                "lan_port_start": lan[0],
-                "lan_port_end": lan[1],
-            }
-            warnings.append(f"opens {writes.describe('forward', after)} to the internet")
-            services = writes.risky(wan, lan)
-            if services:
-                warnings.append(
-                    f"exposes {', '.join(services)}, a common target for attacks; "
-                    "only forward it if that service is hardened and patched"
-                )
-        elif before is None:
-            raise WriteRefused(f"no port forward named {name!r}")
-        return Change(
-            kind="forward", id=name, label=name, before=before, after=after, warnings=warnings
-        )
-
-    @staticmethod
-    def _check_in_use(hosts: list[Host], mac: str, ip: str) -> None:
-        busy = next((h for h in hosts if h.active and h.ipv4 == ip and h.mac != mac), None)
-        if busy:
-            raise WriteRefused(f"{ip} is in use right now by {busy.mac}")
-
-    def apply(self, change: Change, by: str = "") -> Change:
-        """Write one planned change. `by` says who approved it, for the audit log.
-        Checks that depend on other devices run again, since time passed since the plan."""
-        if change.kind not in self.writes:
-            raise WriteRefused(f"{change.kind} writes are not enabled for this session")
-        if change.kind == "lease" and change.after is not None and not change.noop:
-            self._check_in_use(self.cloud.hosts(), change.id, str(change.after["ip_address"]))
-        if not change.noop:
-            writes.apply(self.cloud, change, channel=self.channel, by=by)
-        return change

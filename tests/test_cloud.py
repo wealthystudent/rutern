@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import ssl
 from collections.abc import Callable
 from pathlib import Path
@@ -17,7 +16,6 @@ from rutern.errors import (
     LoginBlocked,
     LoginFailed,
     Unreachable,
-    WriteRefused,
 )
 from rutern.local import LocalClient
 
@@ -73,8 +71,6 @@ class FakePortal:
                 return httpx.Response(401, json={"message": "10000"})
             if req.url.path.endswith("/uptime"):
                 return httpx.Response(200, json={"os": 10, "wan": 5})
-            if req.url.path.endswith("/lan-hosts/alias") and req.method == "POST":
-                return httpx.Response(200, json={})
             return httpx.Response(404)
         return httpx.Response(404)
 
@@ -170,29 +166,6 @@ def test_session_rejected_after_fresh_login_does_not_loop(tmp_path: Path) -> Non
     assert portal.logins == 1
 
 
-def test_post_sends_json_and_origin(tmp_path: Path) -> None:
-    seen: list[httpx.Request] = []
-    portal = FakePortal()
-
-    def handler(req: httpx.Request) -> httpx.Response:
-        seen.append(req)
-        return portal(req)
-
-    c = CloudClient(
-        Config(reference="12345678"),
-        transport=httpx.MockTransport(handler),
-        password=lambda: PASSWORD,
-        store=MemoryStore("good-session"),  # type: ignore[arg-type]
-        guard=LoginGuard(tmp_path / "guard"),
-        writable=True,
-    )
-    c.post("lan-hosts/alias", {"mac": "aa"})
-    req = seen[-1]
-    assert req.method == "POST"
-    assert req.headers["origin"] == "https://wifi.telenor.no"
-    assert json.loads(req.content) == {"mac": "aa"}
-
-
 def test_404_is_api_error(tmp_path: Path) -> None:
     c = client(FakePortal(), MemoryStore("good-session"), tmp_path)
     with pytest.raises(ApiError):
@@ -279,13 +252,16 @@ def test_only_allowlisted_endpoints_reach_the_portal(tmp_path: Path) -> None:
     ):
         with pytest.raises(ApiError, match="not an endpoint"):
             c.get(ep)
-        with pytest.raises(WriteRefused, match="not an endpoint"):
-            c.post(ep, {})
-    with pytest.raises(WriteRefused):
-        c.post("uptime", {})
-    with pytest.raises(WriteRefused):
-        c.request("DELETE", "lan-hosts/alias")
     assert portal.seen == []
+
+
+def test_only_gets_reach_v1(tmp_path: Path) -> None:
+    portal = FakePortal()
+    c = client(portal, MemoryStore("good-session"), tmp_path)
+    for name in ("post", "put", "patch", "delete", "request"):
+        assert not hasattr(c, name)
+    c.get("uptime")
+    assert [x for x in portal.seen if "/v1/" in x] == ["GET /v1/12345678/uptime"]
 
 
 def test_cloud_base_cannot_be_redirected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -344,7 +320,7 @@ def test_validation_error_mentioning_10000_is_not_an_auth_failure(tmp_path: Path
     portal = FakePortal()
 
     def handler(req: httpx.Request) -> httpx.Response:
-        if req.method == "POST" and req.url.path.endswith("/nat-rules"):
+        if req.url.path.endswith("/nat-rules"):
             return httpx.Response(400, json={"message": "Wan_port_start must not exceed 10000"})
         return portal(req)
 
@@ -354,10 +330,9 @@ def test_validation_error_mentioning_10000_is_not_an_auth_failure(tmp_path: Path
         password=lambda: PASSWORD,
         store=MemoryStore("good-session"),  # type: ignore[arg-type]
         guard=LoginGuard(tmp_path / "guard"),
-        writable=True,
     )
     with pytest.raises(ApiError, match="HTTP 400"):
-        c.post("nat-rules", {"rules": []})
+        c.get("nat-rules")
     assert portal.logins == 0
 
 
@@ -432,14 +407,6 @@ def test_oversized_response_is_refused(tmp_path: Path) -> None:
     )
     with pytest.raises(ApiError, match="larger"):
         c.get("uptime")
-
-
-def test_client_is_read_only_unless_made_writable(tmp_path: Path) -> None:
-    portal = FakePortal()
-    c = client(portal, MemoryStore("good-session"), tmp_path)
-    with pytest.raises(WriteRefused, match="read-only"):
-        c.post("lan-hosts/alias", {"hosts": []})
-    assert portal.seen == []
 
 
 def test_refused_keychain_prompt_is_not_asked_again_at_once(tmp_path: Path) -> None:

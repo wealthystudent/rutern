@@ -6,9 +6,9 @@ that blocks further attempts for a while, because repeated failures can
 lock the router. The cookie is cached in Keychain so most runs need no
 login at all; a cached cookie that turns out stale costs one fresh login.
 
-Only the endpoints in READS and WRITES can be reached, by exact name, so
-reboot, factory reset and the msan resets are unreachable through rutern
-even by mistake.
+Only GETs to the endpoints in READS can be sent, by exact name, so rutern
+cannot change anything on the router, and reboot, factory reset and the
+msan resets are unreachable even by mistake.
 """
 
 from __future__ import annotations
@@ -38,10 +38,8 @@ from rutern.errors import (
     LoginBlocked,
     LoginFailed,
     Unreachable,
-    WriteRefused,
 )
 from rutern.models import (
-    AliasEntry,
     Dhcp,
     Dns,
     Firewall,
@@ -69,7 +67,6 @@ READS = frozenset(
         "uptime",
         "lan-hosts",
         "wlan",
-        "lan-hosts/alias",
         "static-dhcp-leases",
         "static-routes",
         "dhcp",
@@ -82,7 +79,6 @@ READS = frozenset(
         "upnp/mappings",
     }
 )
-WRITES = frozenset({"lan-hosts/alias", "static-dhcp-leases", "static-routes", "nat-rules"})
 
 GUARD_HINT = "Check the Keychain password, then run `rutern logout` to clear this guard"
 
@@ -173,10 +169,8 @@ class CloudClient:
         guard: LoginGuard | None = None,
         pin: ReferencePin | None = None,
         clock: Callable[[], float] = time.monotonic,
-        writable: bool = False,
     ):
         self.config = config or Config()
-        self.writable = writable
         self._password = password
         self._store = store if store is not None else SessionStore()
         self._guard = guard or LoginGuard()
@@ -330,14 +324,12 @@ class CloudClient:
 
     # requests
 
-    def _send(self, method: str, endpoint: str, body: Any = None) -> httpx.Response:
-        path = f"/v1/{self.reference}/{endpoint}"
-        headers = {"Origin": CLOUD_BASE} if method != "GET" else None
-        req = self._http.build_request(method, path, json=body, headers=headers)
+    def _send(self, endpoint: str) -> httpx.Response:
+        req = self._http.build_request("GET", f"/v1/{self.reference}/{endpoint}")
         try:
             return net.send(self._http, req)
         except httpx.HTTPError as e:
-            raise Unreachable(f"wifi.telenor.no did not answer {method} {endpoint}") from e
+            raise Unreachable(f"wifi.telenor.no did not answer {endpoint}") from e
 
     @staticmethod
     def _is_auth_failure(r: httpx.Response) -> bool:
@@ -353,30 +345,25 @@ class CloudClient:
             return False
         return isinstance(body, dict) and str(body.get("message")) == AUTH_FAILED_MESSAGE
 
-    def request(self, method: str, endpoint: str, body: Any = None) -> Any:
-        allowed = (method == "GET" and endpoint in READS) or (
-            method == "POST" and endpoint in WRITES
-        )
-        if not allowed:
-            refused = ApiError if method == "GET" else WriteRefused
-            raise refused(f"{method} {endpoint!r} is not an endpoint rutern uses")
-        if method != "GET" and not self.writable:
-            raise WriteRefused("this rutern session is read-only")
+    def get(self, endpoint: str) -> Any:
+        """GET one /v1 endpoint from READS; rutern sends nothing else to /v1."""
+        if endpoint not in READS:
+            raise ApiError(f"{endpoint!r} is not an endpoint rutern reads")
         fresh = self._ensure_session()
-        r = self._send(method, endpoint, body)
+        r = self._send(endpoint)
         if self._is_auth_failure(r):
             if fresh:
                 raise AuthRequired(f"{endpoint}: session rejected right after login")
             # The session went stale. Log in once and retry once.
             self._store.clear()
             self.login()
-            r = self._send(method, endpoint, body)
+            r = self._send(endpoint)
             if self._is_auth_failure(r):
                 raise AuthRequired(f"{endpoint}: session rejected right after login")
         if r.status_code == 404:
             raise ApiError(f"{endpoint}: not found (HTTP 404)")
         if r.status_code >= 400 or r.is_redirect:
-            raise ApiError(f"{method} {endpoint}: HTTP {r.status_code}")
+            raise ApiError(f"{endpoint}: HTTP {r.status_code}")
         if not r.content:
             return None
         try:
@@ -384,14 +371,8 @@ class CloudClient:
         except ValueError as e:
             raise ApiError(f"{endpoint}: response is not JSON") from e
         if isinstance(data, dict) and data.get("errors"):
-            raise ApiError(f"{method} {endpoint}: router reported {len(data['errors'])} error(s)")
+            raise ApiError(f"{endpoint}: router reported {len(data['errors'])} error(s)")
         return data
-
-    def get(self, endpoint: str) -> Any:
-        return self.request("GET", endpoint)
-
-    def post(self, endpoint: str, body: Any) -> Any:
-        return self.request("POST", endpoint, body)
 
     # reads
 
@@ -404,15 +385,6 @@ class CloudClient:
 
     def wifi(self) -> Wifi:
         return parse(Wifi, self.get("wlan"), "wlan")
-
-    def aliases(self) -> list[AliasEntry]:
-        """Saved aliases (non_volatile). Entries with an empty alias are dropped."""
-        data = self.get("lan-hosts/alias")
-        return [
-            a
-            for a in (parse(AliasEntry, x, "lan-hosts/alias") for x in _list(data, "non_volatile"))
-            if a.alias
-        ]
 
     def leases(self) -> Leases:
         data = self.get("static-dhcp-leases")

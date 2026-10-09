@@ -6,7 +6,7 @@ class RuternError(Exception):
 
 
 class ConfigError(RuternError):
-    """Settings (env, policy file, saved state) are invalid or missing."""
+    """Settings (env, saved state, credentials) are invalid or missing."""
 
 
 class Unreachable(RuternError):
@@ -34,8 +34,4 @@ class ApiError(RuternError):
 
 
 class NotAllowed(RuternError):
-    """Policy or a guardrail refused the action."""
-
-
-class WriteRefused(NotAllowed):
-    """A write was not allowed (writes disabled, unconfirmed or unknown target)."""
+    """A guardrail refused the action."""

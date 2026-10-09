@@ -17,10 +17,10 @@ def load(name: str) -> Any:
 
 @pytest.fixture(autouse=True)
 def _no_real_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep tests away from the real Keychain, state, policy and router."""
+    """Keep tests away from the real Keychain, state and router."""
     monkeypatch.setattr("rutern.config.home", lambda: tmp_path / "home")
     monkeypatch.setenv("RUTERN_REFERENCE", "12345678")
-    for var in ("RUTERN_HOST", "RUTERN_READ_ONLY", *AGENT_ENV):
+    for var in ("RUTERN_HOST", *AGENT_ENV):
         monkeypatch.delenv(var, raising=False)
 
     def no_keychain(*_: Any, **__: Any) -> None:

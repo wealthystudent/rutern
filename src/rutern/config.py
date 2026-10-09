@@ -36,12 +36,12 @@ def discover_reference(html: str) -> str | None:
 def home() -> Path:
     """The account's home from the password database. HOME and the XDG_* variables
     are ignored on purpose: whoever sets env for a command could otherwise point
-    rutern at their own policy, an empty login guard or a hidden audit log."""
+    rutern at an empty login guard or another router's reference."""
     return Path(pwd.getpwuid(os.getuid()).pw_dir)
 
 
 def state_dir() -> Path:
-    """Per user state (login guard, pinned reference, audit log)."""
+    """Per user state (login guard, pinned reference)."""
     return home() / ".local" / "state" / "rutern"
 
 

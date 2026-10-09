@@ -16,6 +16,6 @@ Only the latest release gets fixes.
 
 ## What counts
 
-Anything that lets someone get past the guardrails described in [docs/security.md](docs/security.md), for example: an agent making a write the owner policy does not allow, a write applied without the person's approval, WiFi keys or credentials reaching an agent, a log or error, router text that controls the terminal, or rutern logging in again and again.
+Anything that lets someone get past the guardrails described in [docs/security.md](docs/security.md), for example: rutern changing something on the router, WiFi keys or credentials reaching an agent, a log or error, router text that controls the terminal, or rutern logging in again and again.
 
 Out of scope: a process that already runs as you with a shell. It can call the portal and `security` directly, which rutern cannot prevent ([trust boundary](docs/security.md#trust-boundary)).

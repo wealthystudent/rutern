@@ -23,7 +23,7 @@ make fixtures   # re-record tests/fixtures from your router, scrubbed in memory
 ## Adding to rutern
 
 - A read: add the endpoint to `READS` in `cloud.py`, a model in `models.py` (`Text` for every router string, `Open` when the item shape is not fully known), a scrubbed fixture, and a CLI command or MCP tool. Record the shape in `docs/api-reference.md`.
-- A write: a `ListSpec` in `writes.py`, a `plan_*` in `router.py`, a policy kind, then the CLI command and, only if it cannot open the network to the internet, an MCP tool. Keep the dry run, the stale-plan check, the audit record and the read-back.
+- Writes: rutern is read-only until each write has been tested on a real router. Reverting the commit "Remove writes for the read-only release" brings back aliases, fixed IPs, routes and port forwards with their guardrails (owner policy, dry run, read-back, audit log, approval over MCP) and tests, as the starting point.
 - Never: destructive endpoints (see `docs/security.md`), login retries, a network transport for the MCP server.
 
 ## Releasing
@@ -48,7 +48,7 @@ The tag starts `.github/workflows/release.yml`: it runs the checks, refuses a ta
 
 ## Dependencies
 
-Dependabot opens one grouped pull request a month for `uv.lock` and one for the GitHub Actions, each version at least 7 days old. Merge them when CI passes. `pyproject.toml` caps every dependency below its next major version, since users install the newest allowed versions rather than `uv.lock`; raise a cap only after the tests pass on the new major. The MCP approval flow leans on the SDK's resolvers, so read the mcp changelog before raising its cap.
+Dependabot opens one grouped pull request a month for `uv.lock` and one for the GitHub Actions, each version at least 7 days old. Merge them when CI passes. `pyproject.toml` caps every dependency below its next major version, since users install the newest allowed versions rather than `uv.lock`; raise a cap only after the tests pass on the new major.
 
 ## When the portal changes
 

@@ -216,16 +216,6 @@ class Host(Model):
         return self.alias or self.hostname or self.vendor or self.mac
 
 
-class AliasEntry(Model):
-    mac: Text
-    alias: Text = Field(validation_alias=AliasChoices("hostname", "alias"))
-
-    @field_validator("mac", mode="after")
-    @classmethod
-    def _mac(cls, v: str) -> str:
-        return normalise_mac(v)
-
-
 class WifiNetwork(Model):
     band: Text
     ssid: Text
