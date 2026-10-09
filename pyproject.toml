@@ -1,14 +1,34 @@
 [project]
 name = "rutern"
 version = "0.1.0"
-description = "Read and configure a Telenor Zyxel EX5700 router from a CLI and an MCP server"
+description = "CLI and MCP server for the Telenor WiFi Ruter II (Zyxel EX5700)"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "wealthystudent" }]
 requires-python = ">=3.12"
+keywords = ["telenor", "zyxel", "ex5700", "router", "mcp", "cli"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: System :: Networking",
+]
 dependencies = [
-    "httpx>=0.27",
-    "pydantic>=2.7",
+    "certifi>=2024",
+    "httpx>=0.27,<1",
+    "pydantic>=2.12,<3",
     "mcp>=2.3,<3",
 ]
+
+[project.urls]
+Homepage = "https://github.com/wealthystudent/rutern"
+Issues = "https://github.com/wealthystudent/rutern/issues"
 
 [project.scripts]
 rutern = "rutern.cli:main"
@@ -21,11 +41,14 @@ dev = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/rutern"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/rutern", "tests", "docs", "README.md", "LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
