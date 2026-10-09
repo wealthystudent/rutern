@@ -380,7 +380,7 @@ def cmd_login(r: Router, a: argparse.Namespace) -> str:
             ) from e
         r.cloud.find_reference()
     r.cloud.login()
-    return look.fg(look.OK, "logged in; session cached in Keychain, router reference saved")
+    return look.fg(look.OK, "logged in; session cached and router reference saved")
 
 
 def cmd_logout(r: Router, a: argparse.Namespace) -> str:

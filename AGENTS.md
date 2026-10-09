@@ -9,7 +9,7 @@ Read before writing code:
 - `docs/development.md`: checks, fixtures, adding reads, releases.
 
 Hard rules:
-- The admin password lives in macOS Keychain (service `telenor-router`, account `telenor`) and only `keychain.py` reads it, at login. Never print, log or pass it, or the session cookie, as an argument, env var or error text. You never see credentials.
+- The admin password lives in the macOS Keychain, the Linux keyring, or a private file on headless Linux (service `telenor-router`, account `telenor`), and only `credentials.py` reads it, at login. Never print, log or pass it, or the session cookie, as an argument, env var or error text. You never see credentials.
 - Never contact a real router or the portal unless the person asks: no `make live`, `make fixtures` or `rutern login` on your own. Tests must pass offline from `tests/fixtures/`.
 - Login makes a single attempt; repeated failures can lock the router. Never add retries or loops around login.
 - Never implement destructive endpoints: factory-reset, reboot, msan/reset-*, msan/dsl-reprovision.

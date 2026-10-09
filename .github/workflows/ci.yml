@@ -11,9 +11,11 @@ permissions:
 
 jobs:
   check:
-    runs-on: macos-latest
+    name: check (${{ matrix.os }}, ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
+        os: [macos-latest, ubuntu-latest]
         python: ["3.12", "3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

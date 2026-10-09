@@ -20,6 +20,6 @@ them with placeholders like 02:00:00:00:00:01 or 203.0.113.1.
 
 **Versions**
 - rutern: (`rutern --version`)
-- macOS:
+- OS (macOS version, or Linux distribution):
 - router model and firmware: (`rutern status`)
 - MCP client, if it happened over MCP:

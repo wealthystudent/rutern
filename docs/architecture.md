@@ -28,7 +28,7 @@ Why hybrid and not one backend: local is instant and private but firmware-limite
 src/rutern/
   config.py       LAN host, fixed portal URL, reference validation, private state files
   net.py          HTTP send with a response size cap; TLS roots from certifi, env ignored
-  keychain.py     Keychain read of the admin password (macOS only); session cookie cache
+  credentials.py  admin password and session: macOS Keychain, Linux keyring or private files
   errors.py       ConfigError, Unreachable, PermissionDenied, AuthRequired, LoginFailed, LoginBlocked, ApiError, NotAllowed
   models.py       Pydantic models; router strings cleaned, secrets redacted
   local.py        LocalClient: /ws transport + unauthenticated reads
@@ -40,7 +40,7 @@ src/rutern/
 scripts/record_fixtures.py   re-record scrubbed fixtures from the live router
 tests/
   fixtures/       recorded /ws and /v1 JSON, scrubbed; tests run offline
-.github/          CI on macOS, tag-triggered release to PyPI, Dependabot
+.github/          CI on macOS and Ubuntu, tag-triggered release to PyPI, Dependabot
 ```
 
 ## Testing approach

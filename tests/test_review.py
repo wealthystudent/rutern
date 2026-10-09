@@ -59,3 +59,16 @@ def test_logout_clears_the_guard_only_for_a_person(
     monkeypatch.setattr("sys.stdin", io.StringIO(""))
     assert main(["logout"], router=lambda: r) == 0
     assert guard.path.exists() is not person
+
+
+def test_every_path_rutern_derives_is_in_the_sandbox(tmp_path: Path) -> None:
+    from rutern import credentials
+
+    for path in (
+        config.home(),
+        config.state_dir(),
+        credentials.password_file(),
+        credentials.Files._session(),
+        LoginGuard().path,
+    ):
+        assert str(path).startswith(str(tmp_path)), path

@@ -26,7 +26,7 @@ rutern is read-only: it cannot change anything on the router. Changing settings 
 ## Requirements
 
 - A Telenor WiFi Ruter II (Zyxel EX5700). Other routers managed at wifi.telenor.no may partly work but are untested.
-- macOS. The admin password is kept in the macOS Keychain.
+- macOS, or Linux. The admin password is kept in the macOS Keychain, your Linux desktop's keyring, or on a headless Linux machine a file only you can read.
 - [uv](https://docs.astral.sh/uv/) (or pipx). Python 3.12 or newer; uv installs it for you.
 - The router's admin password: the one you use to log in as administrator at wifi.telenor.no.
 
@@ -40,7 +40,9 @@ Upgrade with `uv tool upgrade rutern`. With pipx: `pipx install rutern`.
 
 ## Set up
 
-1. Put the admin password in the Keychain. It asks for the password twice:
+1. Store the admin password, in the way that fits your machine.
+
+   **macOS**, in the Keychain. It asks for the password twice:
 
    ```
    security add-generic-password -s telenor-router -a telenor -T "" -w
@@ -48,13 +50,29 @@ Upgrade with `uv tool upgrade rutern`. With pipx: `pipx install rutern`.
 
    `-T ""` means no program may read it without asking you. Whenever rutern logs in, macOS asks; click **Allow**, not Always Allow, so nothing else can read it silently later.
 
+   **Linux with a desktop**, in the keyring (GNOME Keyring or KWallet) through `secret-tool`. Install it first if needed (`sudo apt install libsecret-tools` on Debian and Ubuntu, `sudo dnf install libsecret` on Fedora, `sudo pacman -S libsecret` on Arch). It asks for the password:
+
+   ```
+   secret-tool store --label='Telenor router admin password' service telenor-router account telenor
+   ```
+
+   **Linux without a keyring** (a home server, a Raspberry Pi), in a file only you can read:
+
+   ```
+   install -d -m 700 ~/.config/rutern
+   install -m 600 /dev/null ~/.config/rutern/password
+   nano ~/.config/rutern/password       # the password, on one line
+   ```
+
+   rutern uses this file only when it exists, and refuses it if anyone else can read it. The file is not encrypted, so keep it out of backups you share.
+
 2. At home, connected to the router, log in once:
 
    ```
    rutern login
    ```
 
-   This finds your router's reference id, logs in, and caches the session in the Keychain. Later commands reuse the session and log in again only when it expires.
+   This finds your router's reference id, logs in, and caches the session next to the password. Later commands reuse the session and log in again only when it expires.
 
 3. Try it:
 
@@ -90,7 +108,7 @@ Every command except `mcp` takes `--json` for scripts and `--no-color`. `rutern 
 claude mcp add --scope user rutern -- rutern mcp
 ```
 
-**Claude Desktop**: Settings, Developer, Edit Config, then add to `claude_desktop_config.json`:
+**Claude Desktop** (macOS): Settings, Developer, Edit Config, then add to `claude_desktop_config.json`:
 
 ```json
 {
@@ -104,7 +122,7 @@ Use the full path that `which rutern` prints; apps do not see your shell's PATH.
 
 **Other clients**: command `rutern`, arguments `mcp`, transport stdio.
 
-Run `rutern login` in a terminal first. When the cached session expires, the next tool call logs in again and macOS asks whether `security` may read the password; the call waits up to two minutes for your answer.
+Run `rutern login` in a terminal first. When the cached session expires, the next tool call logs in again: macOS asks whether `security` may read the password, and a locked Linux keyring shows its unlock dialog. The call waits up to two minutes for your answer.
 
 The tools:
 
@@ -133,14 +151,14 @@ The local API answers instantly and works without internet, but the firmware onl
 
 ## Security
 
-- The admin password stays in the Keychain and is read only at login. The session cookie is cached in the Keychain too.
+- The admin password stays in the Keychain, the keyring or your private file, and is read only at login. The session cookie is cached the same way.
 - rutern talks only to your router and to `https://wifi.telenor.no`, fixed in code. It ignores proxy and certificate settings in the environment, so nothing can route the password elsewhere. No telemetry.
 - rutern never retries a login. A rejected one blocks further attempts for 15 minutes, because repeated failures can lock the router.
 - Read-only: rutern only sends reads to the portal, so neither you nor an agent can change the router through it.
 - WiFi keys never reach an agent, and only reach the screen when you ask at a terminal. When an AI agent runs rutern in its shell and says so (Claude Code, Gemini CLI, Cursor, Copilot and others set a marker), `--show-secrets` is refused.
 - Reboot, factory reset and similar endpoints are not in the code at all.
 
-These guardrails cover rutern's commands and MCP tools. A program running as you with a shell (an agent with a terminal tool included) can do anything you can, including reading the cached session. Give agents rutern's MCP server rather than free shell access to it, and keep the Keychain prompt. The full model is in [docs/security.md](https://github.com/wealthystudent/rutern/blob/main/docs/security.md).
+These guardrails cover rutern's commands and MCP tools. A program running as you with a shell (an agent with a terminal tool included) can do anything you can, including reading the cached session. Give agents rutern's MCP server rather than free shell access to it. On macOS, keep the Keychain prompt. Linux has nothing like it: any program running as you can read an unlocked keyring or the password file. The full model is in [docs/security.md](https://github.com/wealthystudent/rutern/blob/main/docs/security.md).
 
 ## Troubleshooting
 
@@ -148,9 +166,12 @@ These guardrails cover rutern's commands and MCP tools. A program running as you
 |---|---|
 | `no router reference yet` | Run `rutern login` once at home. |
 | `the router does not answer on this LAN` | Connect to the router's network, or set `RUTERN_REFERENCE`. If your router is not at 10.0.0.138, set `RUTERN_HOST`. |
-| `no admin password in Keychain` | Store it with the `security add-generic-password` command above. |
-| `Keychain did not hand over the admin password` | The prompt was denied or not answered within two minutes. Run the command again and click Allow. |
-| `the last login was rejected or cut off; not retrying for N min` | Check the stored password: `security delete-generic-password -s telenor-router -a telenor`, add it again, then run `rutern logout` in a plain terminal to lift the block. |
+| `no admin password in the Keychain` or `in the keyring` | Store it with the command for your system under Set up. |
+| `the Keychain did not hand over the admin password` | The prompt was denied or not answered within two minutes. Run the command again and click Allow. |
+| `the keyring did not hand over the admin password` | The keyring is locked or not running, which is normal on a machine without a desktop session. Unlock it, or use the password file. |
+| `secret-tool is not installed` | Install it (see Set up), or use the password file. |
+| `.../password must be yours and readable only by you` | Run the `chmod` commands the message names. |
+| `the last login was rejected or cut off; not retrying for N min` | Check the stored password and store it again, then run `rutern logout` in a plain terminal to lift the block. |
 | `unexpected response shape` | The portal changed. Please open an issue. |
 
 `RUTERN_DEBUG=1` adds a traceback to unexpected errors.
@@ -170,8 +191,10 @@ Files rutern keeps:
 |---|---|
 | `~/.local/state/rutern/reference` | your router's reference id, saved at the first login |
 | `~/.local/state/rutern/login-failed` | the 15 minute login block after a rejected or cut-off login |
-| Keychain `telenor-router` | the admin password |
-| Keychain `telenor-router-session` | the cached session |
+| Keychain or keyring item `telenor-router` | the admin password |
+| Keychain or keyring item `telenor-router-session` | the cached session |
+| `~/.config/rutern/password` | the admin password, on Linux without a keyring |
+| `~/.local/state/rutern/session` | the cached session, when the password file is used |
 
 To remove everything:
 
@@ -179,7 +202,8 @@ To remove everything:
 rutern logout
 uv tool uninstall rutern
 rm -rf ~/.config/rutern ~/.local/state/rutern
-security delete-generic-password -s telenor-router -a telenor
+security delete-generic-password -s telenor-router -a telenor        # macOS
+secret-tool clear service telenor-router account telenor             # Linux keyring
 ```
 
 ## Contributing

@@ -3,8 +3,9 @@
 Login is a SvelteKit form action that sets the `__Host-session` cookie. It
 runs at most once per process, and a rejected login writes a guard file
 that blocks further attempts for a while, because repeated failures can
-lock the router. The cookie is cached in Keychain so most runs need no
-login at all; a cached cookie that turns out stale costs one fresh login.
+lock the router. The cookie is cached next to the password (Keychain,
+keyring or a private file, see credentials.py) so most runs need no login at
+all; a cached cookie that turns out stale costs one fresh login.
 
 Only GETs to the endpoints in READS can be sent, by exact name, so rutern
 cannot change anything on the router, and reboot, factory reset and the
@@ -22,7 +23,7 @@ from typing import Any
 
 import httpx
 
-from rutern import keychain, net
+from rutern import credentials, net
 from rutern.config import (
     CLOUD_BASE,
     Config,
@@ -146,16 +147,16 @@ class ReferencePin:
 
 
 class SessionStore:
-    """Where the session cookie is cached between runs (Keychain by default)."""
+    """Where the session cookie is cached between runs (see credentials.py)."""
 
     def load(self) -> str | None:
-        return keychain.load_session()
+        return credentials.load_session()
 
     def save(self, value: str) -> None:
-        keychain.store_session(value)
+        credentials.save_session(value)
 
     def clear(self) -> None:
-        keychain.clear_session()
+        credentials.clear_session()
 
 
 class CloudClient:
@@ -164,7 +165,7 @@ class CloudClient:
         config: Config | None = None,
         *,
         transport: httpx.BaseTransport | None = None,
-        password: Callable[[], str] = keychain.admin_password,
+        password: Callable[[], str] = credentials.admin_password,
         store: SessionStore | None = None,
         guard: LoginGuard | None = None,
         pin: ReferencePin | None = None,

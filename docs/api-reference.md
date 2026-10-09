@@ -58,7 +58,7 @@ Success: HTTP 200, body {"type":"redirect","status":303,"location":"/"},
 
 This is a SvelteKit form action; the action path is relative to the `/login/admin` page. The old `/login?/login=` used by kivattt/cpe-insight is dead and returns HTTP 500 ("No form actions exist for this page").
 
-The admin password is the same one used to sign in to wifi.telenor.no. It lives in macOS Keychain: service `telenor-router`, account `telenor`. Read it at runtime, never embed or log it.
+The admin password is the same one used to sign in to wifi.telenor.no. rutern keeps it in the macOS Keychain or the Linux keyring (service `telenor-router`, account `telenor`), or a private file on headless Linux. Read it at runtime, never embed or log it.
 
 ### Reads (GET `/v1/{reference}/<endpoint>`, send the session cookie)
 

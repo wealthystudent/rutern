@@ -7,7 +7,7 @@ uv sync
 make check      # ruff, ruff format --check, mypy --strict, pytest
 ```
 
-Tests run offline against the recorded responses in `tests/fixtures/` (`tests/fakes.py` serves them as a fake router and portal). The autouse fixture in `tests/conftest.py` points home at a temp dir and makes any Keychain call fail, so no test can touch real state. CI runs `make check` on macOS for the oldest and newest supported Python (`.github/workflows/ci.yml`).
+Tests run offline against the recorded responses in `tests/fixtures/` (`tests/fakes.py` serves them as a fake router and portal). The autouse fixture in `tests/conftest.py` makes the password database answer with a temp home and any credential store call fail, so no test can touch real state. CI runs `make check` on macOS and Ubuntu for the oldest and newest supported Python (`.github/workflows/ci.yml`).
 
 ## Against the real router
 

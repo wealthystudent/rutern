@@ -4,12 +4,13 @@ This tool holds router admin credentials and is partly driven by an AI agent, so
 
 ## Secrets
 
-- The admin password lives in macOS Keychain: service `telenor-router`, account `telenor`. Read it only at the moment of login, via `/usr/bin/security find-generic-password -s telenor-router -a telenor -w`.
-- Create the item with `-T ""` so it trusts no app: macOS then asks before any program reads it, which makes a silent read by an agent with shell access visible. Answer Allow, not Always Allow: Always Allow trusts `/usr/bin/security`, after which any program can read the item silently through it. The read waits up to 120 s for that answer.
-- macOS only: with no `/usr/bin/security`, anything that needs the password stops with an error saying so.
+- `credentials.py` is the only code that touches the admin password and the session cookie. It picks one store: the macOS Keychain; on Linux the password file when the person has created `~/.config/rutern/password`, else the desktop keyring (Secret Service). It never falls back to a file on its own. Service `telenor-router` (password) and `telenor-router-session` (cookie), account `telenor`.
+- The password is read only at the moment of login. Never put it in a CLI argument, environment variable, log line, error message, or fixture. Never print it. Secrets reach `security` and `secret-tool` on stdin, never in argv, and both run from fixed system paths so one planted earlier in PATH never sees them.
+- macOS: create the Keychain item with `-T ""` so it trusts no app; macOS then asks before any program reads it, which makes a silent read by an agent with shell access visible. Answer Allow, not Always Allow: Always Allow trusts `/usr/bin/security`, after which any program can read the item silently through it. The read waits up to 120 s for that answer.
+- Linux keyring: GNOME Keyring and KWallet hand an unlocked secret to any program running as the person, with no prompt per read. A locked keyring shows its unlock dialog; the read waits up to 120 s.
+- Linux file: like `~/.ssh`, the password file must be a regular file (not a link) owned by the person and readable by nobody else, in a directory nobody else can write; anything else is refused. It is not encrypted. The session then lives in `~/.local/state/rutern/session` (0600).
 - The portal address is fixed in code to `https://wifi.telenor.no`. No env var, flag or config can send the password or the session cookie anywhere else: both HTTP clients ignore the environment (`HTTPS_PROXY` and friends), certificates are checked against certifi's roots whatever `SSL_CERT_FILE` or `SSL_CERT_DIR` say, and `SSLKEYLOGFILE` cannot record the TLS keys.
-- Never put the password in a CLI argument, environment variable, log line, error message, or fixture. Never print it.
-- The session cookie (`__Host-session`) is cached in Keychain (service `telenor-router-session`), written through `security -i` on stdin so it never appears in argv. It is a credential too; do not log it. `rutern logout` removes it.
+- The session cookie (`__Host-session`) is a credential too; do not log it. `rutern logout` removes it.
 - The agent never receives any credential. The MCP server holds them; the agent sees only tool results.
 
 ## Redaction
@@ -47,10 +48,10 @@ The cloud API is undocumented and can change without notice. Responses are valid
 
 ## Trust boundary
 
-The guardrails bind the interfaces rutern offers: MCP tools and CLI commands. They do not bind a process that runs as you with a shell. Such a process (an agent with a Bash tool included) can call `security` and the portal directly, and nothing in rutern can stop that. What they do:
+The guardrails bind the interfaces rutern offers: MCP tools and CLI commands. They do not bind a process that runs as you with a shell. Such a process (an agent with a Bash tool included) can call `security`, `secret-tool` and the portal directly, and nothing in rutern can stop that. What they do:
 
 - An agent using rutern, over MCP or through the CLI, cannot change the router or see WiFi keys.
-- The Keychain item created with `-T ""` makes macOS ask before any program reads the admin password, so a silent read becomes a visible prompt. The session cookie is not protected that way; it lasts until the portal expires it or `rutern logout`.
-- The state (login guard, pinned reference) lives under the account's home as the password database names it. `HOME` and `XDG_*` cannot move it, so setting env on a command cannot swap in an empty guard or another router's reference.
+- On macOS the Keychain item created with `-T ""` makes macOS ask before any program reads the admin password, so a silent read becomes a visible prompt. Linux has no equivalent: an unlocked keyring or the password file is readable by anything running as the person. The session cookie is not protected by a prompt anywhere; it lasts until the portal expires it or `rutern logout`.
+- The state (login guard, pinned reference) and the Linux password file live under the account's home as the password database names it. `HOME` and `XDG_*` cannot move it, so setting env on a command cannot swap in an empty guard, another router's reference or another password.
 - "A person at a terminal" means stdin is a TTY and no agent marker is set (`AGENT_ENV` in `cli.py`: `AI_AGENT`, `CLAUDECODE`, `GEMINI_CLI`, `CURSOR_AGENT` and others). The markers matter because some agents run commands in a real pseudo-terminal. An agent that sets none and fakes a TTY is past this boundary anyway. Editor terminals that an AI extension marks (Claude Code's IDE extensions set `CLAUDECODE`) count as agents too; use a plain terminal for `--show-secrets` and for `rutern logout` to clear the login guard.
 - MCP runs on stdio only. Never add a network transport without authentication.
